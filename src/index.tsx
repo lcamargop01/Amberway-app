@@ -9,6 +9,7 @@ import dealsRoutes from './routes/deals'
 import communicationsRoutes from './routes/communications'
 import tasksRoutes from './routes/tasks'
 import purchaseOrdersRoutes from './routes/purchase-orders'
+import shipmentsRoutes from './routes/shipments'
 import apiRoutes from './routes/api'
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -32,6 +33,7 @@ app.route('/api/deals', dealsRoutes)
 app.route('/api/communications', communicationsRoutes)
 app.route('/api/tasks', tasksRoutes)
 app.route('/api/purchase-orders', purchaseOrdersRoutes)
+app.route('/api/shipments', shipmentsRoutes)
 app.route('/api', apiRoutes)
 
 app.get('*', (c) => c.html(HTML))
@@ -511,7 +513,48 @@ body {
 .thread-from { font-weight: 700; color: #3C3C43; }
 .thread-time { color: #8E8E93; }
 .thread-subj { font-size: 11px; color: #8E8E93; margin-bottom: 4px; }
-</style>
+
+/* ── SHIPMENT TRACKING ────────────────────────── */
+.track-status-ring {
+  width: 56px; height: 56px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; flex-shrink: 0;
+}
+.track-timeline { position: relative; padding-left: 20px; }
+.track-timeline::before {
+  content: ''; position: absolute; left: 6px; top: 8px;
+  bottom: 8px; width: 2px; background: #E5E5EA;
+}
+.track-event {
+  position: relative; display: flex; flex-direction: column;
+  padding: 0 0 16px 16px;
+}
+.track-event::before {
+  content: ''; position: absolute; left: -1px; top: 5px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #E5E5EA; border: 2px solid #fff;
+  box-shadow: 0 0 0 2px #E5E5EA;
+}
+.track-event.active::before {
+  background: #007AFF; box-shadow: 0 0 0 2px #007AFF;
+}
+.track-event.delivered::before {
+  background: #34C759; box-shadow: 0 0 0 2px #34C759;
+}
+.track-event-time { font-size: 11px; color: #8E8E93; font-weight: 500; }
+.track-event-desc { font-size: 14px; font-weight: 600; color: #1C1C1E; margin-top: 2px; }
+.track-event-loc  { font-size: 12px; color: #8E8E93; margin-top: 1px; }
+
+.shipment-card {
+  background: #fff; border-radius: 16px;
+  margin: 0 16px 10px; padding: 16px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.05), 0 2px 8px rgba(0,0,0,0.04);
+  cursor: pointer; border-left: 4px solid #5856D6;
+  transition: transform 0.1s;
+}
+.shipment-card:active { transform: scale(0.985); }
+.shipment-card.delivered { border-left-color: #34C759; }
+.shipment-card.out_for_delivery { border-left-color: #FF9500; }</style>
 </head>
 <body>
 <div class="app-wrap">
@@ -611,8 +654,13 @@ body {
 ═════════════════════════════════════════════ -->
 <div class="page" id="page-orders">
   <div class="page-header">
-    <div class="page-title">Orders</div>
-    <div class="page-subtitle" id="orders-subtitle">Purchase orders & shipments</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div class="page-title">Orders</div>
+    </div>
+    <div class="segment" id="orders-seg">
+      <button class="seg-btn active" onclick="filterOrders('shipments',this)">🚚 Shipments</button>
+      <button class="seg-btn" onclick="filterOrders('orders',this)">📦 POs</button>
+    </div>
   </div>
   <div id="orders-list">
     <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
@@ -977,6 +1025,117 @@ body {
     <button class="sheet-close" onclick="closeSheet('sh-email-thread')"><i class="fas fa-xmark"></i></button>
   </div>
   <div id="sh-email-thread-body" class="sheet-body" style="padding-bottom:28px"></div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     ADD TRACKING SHEET
+══════════════════════════════════════════════ -->
+<div class="sheet-backdrop" id="bd-tracking-entry" onclick="closeSheet('sh-tracking-entry')"></div>
+<div class="sheet" id="sh-tracking-entry">
+  <span class="sheet-pill"></span>
+  <div class="sheet-header">
+    <div>
+      <div class="sheet-title" style="display:flex;align-items:center;gap:8px">
+        <span style="display:inline-flex;width:28px;height:28px;background:#5856D6;border-radius:8px;align-items:center;justify-content:center">
+          <i class="fas fa-truck" style="color:#fff;font-size:13px"></i>
+        </span>
+        Add Tracking
+      </div>
+      <div style="font-size:13px;color:#8E8E93;margin-top:2px" id="tracking-entry-subtitle">Enter shipment tracking details</div>
+    </div>
+    <button class="sheet-close" onclick="closeSheet('sh-tracking-entry')"><i class="fas fa-xmark"></i></button>
+  </div>
+  <div class="sheet-body" style="padding-bottom:28px">
+
+    <!-- Carrier chips -->
+    <div style="font-size:12px;font-weight:700;color:#8E8E93;letter-spacing:.05em;margin-bottom:10px">SELECT CARRIER</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px" id="carrier-chips">
+      <button class="carrier-chip" onclick="selectCarrier('UPS')" style="padding:10px 6px;border-radius:12px;border:1.5px solid #E5E5EA;background:#F9F9F9;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s">
+        <div style="font-size:18px;margin-bottom:3px">🟤</div>UPS
+      </button>
+      <button class="carrier-chip" onclick="selectCarrier('FedEx')" style="padding:10px 6px;border-radius:12px;border:1.5px solid #E5E5EA;background:#F9F9F9;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s">
+        <div style="font-size:18px;margin-bottom:3px">🟣</div>FedEx
+      </button>
+      <button class="carrier-chip" onclick="selectCarrier('USPS')" style="padding:10px 6px;border-radius:12px;border:1.5px solid #E5E5EA;background:#F9F9F9;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s">
+        <div style="font-size:18px;margin-bottom:3px">🦅</div>USPS
+      </button>
+      <button class="carrier-chip" onclick="selectCarrier('Estes Express')" style="padding:10px 6px;border-radius:12px;border:1.5px solid #E5E5EA;background:#F9F9F9;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s">
+        <div style="font-size:18px;margin-bottom:3px">🚛</div>Estes
+      </button>
+      <button class="carrier-chip" onclick="selectCarrier('XPO Logistics')" style="padding:10px 6px;border-radius:12px;border:1.5px solid #E5E5EA;background:#F9F9F9;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s">
+        <div style="font-size:18px;margin-bottom:3px">🔵</div>XPO
+      </button>
+      <button class="carrier-chip" onclick="selectCarrier('Other')" style="padding:10px 6px;border-radius:12px;border:1.5px solid #E5E5EA;background:#F9F9F9;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s">
+        <div style="font-size:18px;margin-bottom:3px">📦</div>Other
+      </button>
+    </div>
+
+    <form id="form-tracking" onsubmit="submitTracking(event)">
+      <input type="hidden" id="tracking-po-id">
+      <input type="hidden" id="tracking-deal-id">
+      <input type="hidden" id="tracking-contact-id">
+
+      <div class="form-group">
+        <label class="form-label">Carrier Name</label>
+        <input class="form-input" id="tracking-carrier" name="carrier" required placeholder="e.g. UPS, FedEx, Estes…">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Tracking Number *</label>
+        <input class="form-input" id="tracking-number" name="tracking_number" required placeholder="1Z999AA10123456784">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Tracking URL (optional — auto-generated if blank)</label>
+        <input class="form-input" id="tracking-url" name="tracking_url" type="url" placeholder="https://…">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Estimated Delivery Date</label>
+        <input class="form-input" id="tracking-eta" name="estimated_delivery" type="date">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Notes (optional)</label>
+        <input class="form-input" id="tracking-notes" name="notes" placeholder="Any special delivery instructions…">
+      </div>
+
+      <!-- Preview tracking URL -->
+      <div id="tracking-url-preview" style="display:none;background:#EEF4FF;border-radius:12px;padding:12px 14px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:700;color:#007AFF;margin-bottom:4px">TRACKING LINK PREVIEW</div>
+        <div id="tracking-url-preview-text" style="font-size:13px;color:#007AFF;word-break:break-all"></div>
+      </div>
+
+      <button type="submit" class="btn" style="background:#5856D6;color:#fff;margin-bottom:10px">
+        <i class="fas fa-truck"></i> Save Tracking Info
+      </button>
+    </form>
+
+    <!-- After save: customer notification actions -->
+    <div id="tracking-saved-actions" style="display:none;flex-direction:column;gap:10px">
+      <div style="background:#F0FDF4;border-radius:14px;padding:14px;border:1px solid #BBF7D0;margin-bottom:4px">
+        <div style="font-weight:700;color:#166534;font-size:15px;margin-bottom:4px">✅ Tracking Saved!</div>
+        <div style="font-size:13px;color:#15803D" id="tracking-saved-msg">Order is now In Transit.</div>
+      </div>
+      <button onclick="notifyCustomerTracking()" class="btn btn-primary">
+        <i class="fas fa-share"></i> Send Tracking to Customer
+      </button>
+      <button onclick="openAIDraftFromTracking()" class="btn" style="background:linear-gradient(135deg,#5856D6,#007AFF);color:#fff">
+        <i class="fas fa-wand-magic-sparkles"></i> Draft Tracking Email with AI
+      </button>
+      <button onclick="copyTrackingLink()" class="btn btn-gray">
+        <i class="fas fa-copy"></i> Copy Tracking Link
+      </button>
+      <button onclick="closeSheet('sh-tracking-entry')" class="btn btn-gray" style="color:#8E8E93">
+        Done
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     SHIPMENT DETAIL SHEET
+══════════════════════════════════════════════ -->
+<div class="sheet-backdrop" id="bd-shipment-detail" onclick="closeSheet('sh-shipment-detail')"></div>
+<div class="sheet" id="sh-shipment-detail">
+  <span class="sheet-pill"></span>
+  <div id="sh-shipment-detail-body"></div>
 </div>
 
 </div><!-- .app-wrap -->

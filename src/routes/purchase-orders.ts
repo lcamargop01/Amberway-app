@@ -233,48 +233,103 @@ purchaseOrders.post('/:id/request-quote', async (c) => {
 purchaseOrders.post('/:id/add-tracking', async (c) => {
   const { DB } = c.env
   const id = c.req.param('id')
-  const { carrier, tracking_number, contact_id } = await c.req.json()
+  const {
+    carrier,
+    tracking_number,
+    tracking_url: customTrackingUrl,
+    contact_id,
+    estimated_delivery,
+    notes
+  } = await c.req.json()
 
-  const po = await DB.prepare('SELECT * FROM purchase_orders WHERE id = ?').bind(id).first() as any
+  if (!carrier || !tracking_number) {
+    return c.json({ error: 'carrier and tracking_number are required' }, 400)
+  }
+
+  const po = await DB.prepare(`
+    SELECT po.*, d.contact_id as deal_contact_id
+    FROM purchase_orders po
+    LEFT JOIN deals d ON po.deal_id = d.id
+    WHERE po.id = ?
+  `).bind(id).first() as any
   if (!po) return c.json({ error: 'PO not found' }, 404)
+
+  // Resolve contact: explicit > from deal > null
+  const resolvedContactId = contact_id || po.deal_contact_id || null
 
   // Add tracking to PO
   const existing_tracking = JSON.parse(po.tracking_numbers || '[]')
   existing_tracking.push(tracking_number)
-  
-  await DB.prepare(`
-    UPDATE purchase_orders SET tracking_numbers=?, status='shipped', shipped_at=CURRENT_TIMESTAMP, 
-      shipping_carrier=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
-  `).bind(JSON.stringify(existing_tracking), carrier, id).run()
 
-  // Create shipment record
-  const trackingUrl = getTrackingUrl(carrier, tracking_number)
+  const trackingUrl = customTrackingUrl || getTrackingUrl(carrier, tracking_number)
+
+  await DB.prepare(`
+    UPDATE purchase_orders SET
+      tracking_numbers=?, status='shipped', shipped_at=CURRENT_TIMESTAMP,
+      shipping_carrier=?, expected_delivery=COALESCE(?, expected_delivery),
+      updated_at=CURRENT_TIMESTAMP
+    WHERE id=?
+  `).bind(JSON.stringify(existing_tracking), carrier, estimated_delivery || null, id).run()
+
+  // Create shipment record with full details
+  const initialHistory = JSON.stringify([{
+    timestamp: new Date().toISOString(),
+    status: 'in_transit',
+    description: `Shipment created — ${carrier} tracking #${tracking_number}`,
+    location: ''
+  }])
+
   const shipResult = await DB.prepare(`
-    INSERT INTO shipments (purchase_order_id, deal_id, contact_id, carrier, tracking_number, tracking_url, status)
-    VALUES (?, ?, ?, ?, ?, ?, 'in_transit')
-  `).bind(parseInt(id), po.deal_id, contact_id || null, carrier, tracking_number, trackingUrl).run()
+    INSERT INTO shipments (
+      purchase_order_id, deal_id, contact_id,
+      carrier, tracking_number, tracking_url,
+      status, estimated_delivery, customer_notified,
+      tracking_history, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'in_transit', ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).bind(
+    parseInt(id), po.deal_id || null, resolvedContactId,
+    carrier, tracking_number, trackingUrl,
+    estimated_delivery || null,
+    initialHistory
+  ).run()
+
+  const shipmentId = shipResult.meta.last_row_id as number
 
   // Update deal stage to shipping
   if (po.deal_id) {
     await DB.prepare('UPDATE deals SET stage=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
       .bind('shipping', po.deal_id).run()
-    
-    // Create notification
-    await createNotification(DB, {
-      type: 'shipment_update',
-      title: `Order shipped! Tracking: ${tracking_number}`,
-      message: `Carrier: ${carrier}`,
-      entity_type: 'purchase_order',
-      entity_id: parseInt(id),
-      priority: 'high',
-      action_url: `/purchase-orders/${id}`
-    })
   }
 
-  return c.json({ 
-    success: true, 
+  // Log activity
+  await logActivity(DB, {
+    deal_id: po.deal_id,
+    entity_type: 'shipment',
+    entity_id: shipmentId,
+    action: 'created',
+    description: `Tracking added: ${carrier} #${tracking_number}${estimated_delivery ? ` · ETA ${estimated_delivery}` : ''}`,
+    performed_by: 'user'
+  })
+
+  // High-priority notification to follow up
+  await createNotification(DB, {
+    type: 'shipment_update',
+    title: `🚚 Tracking added — ${carrier}`,
+    message: `#${tracking_number}${estimated_delivery ? ` · ETA ${estimated_delivery}` : ''} · Send tracking link to customer`,
+    entity_type: 'shipment',
+    entity_id: shipmentId,
+    priority: 'high',
+    action_url: `/shipments/${shipmentId}`
+  })
+
+  return c.json({
+    success: true,
+    shipment_id: shipmentId,
     tracking_url: trackingUrl,
-    shipment_id: shipResult.meta.last_row_id
+    carrier,
+    tracking_number,
+    estimated_delivery: estimated_delivery || null,
+    prompt_notify_customer: true  // Front-end should offer "Send tracking to customer"
   })
 })
 

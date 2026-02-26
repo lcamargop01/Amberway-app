@@ -37,7 +37,10 @@ const NEXT = {
 const PC = { urgent:'#FF3B30', high:'#FF9500', medium:'#FF9500', low:'#8E8E93' }
 const PBG = { urgent:'#FFF1F0', high:'#FFF9EC', medium:'#F9F9F9', low:'#F2F2F7' }
 
-const state = { page:'home', dealsFilter:'active', tasksFilter:'pending', ctab:'email' }
+const state = { page:'home', dealsFilter:'active', tasksFilter:'pending', ctab:'email', ordersFilter:'shipments' }
+
+// ── TRACKING STATE ──────────────────────────────────
+const trackingState = { poId: null, dealId: null, contactId: null, shipmentId: null, trackingUrl: null, carrier: null, trackingNumber: null }
 
 // ── NAVIGATION ───────────────────────────────────────
 function navTo(name) {
@@ -46,7 +49,7 @@ function navTo(name) {
   document.getElementById('page-'+name)?.classList.add('active')
   document.getElementById('ni-'+name)?.classList.add('active')
   state.page = name
-  const loaders = { home: loadHome, deals: loadDeals, contacts: loadContacts, orders: loadOrders, tasks: loadTasks }
+  const loaders = { home: loadHome, deals: loadDeals, contacts: loadContacts, orders: loadShipments, tasks: loadTasks }
   loaders[name]?.()
 }
 
@@ -62,6 +65,14 @@ function closeSheet(id) {
 }
 
 // ── HOME ─────────────────────────────────────────────
+// Add active shipments to Today's action cards
+async function loadActiveShipmentsForHome() {
+  try {
+    const { data } = await axios.get(`${API}/shipments/active/summary`)
+    return data.active_shipments || []
+  } catch { return [] }
+}
+
 async function loadHome() {
   const h = new Date().getHours()
   document.getElementById('hdr-greet').textContent = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
@@ -85,16 +96,34 @@ async function loadHome() {
     if (taskCount > 0) { badge.textContent = taskCount; badge.classList.add('show') }
     else badge.classList.remove('show')
 
-    renderActions(data, attData)
+    const shipData = await loadActiveShipmentsForHome()
+    renderActions(data, attData, shipData)
     renderHomeDeals()
   } catch(e) {
     document.getElementById('home-actions').innerHTML = `<div class="loading" style="color:#C7C7CC"><i class="fas fa-horse"></i></div>`
   }
 }
 
-function renderActions(data, attData) {
+function renderActions(data, attData, activeShipments = []) {
   const el = document.getElementById('home-actions')
   const items = []
+
+  // 0 — Active shipments needing attention
+  ;(activeShipments || []).forEach(s => {
+    const needsNotify = !s.customer_notified
+    const isOFD = s.status === 'out_for_delivery'
+    if (needsNotify || isOFD) items.push({
+      icon: isOFD ? 'fa-truck-fast' : 'fa-truck',
+      iconBg: isOFD ? '#FFF9EC' : '#F5F3FF',
+      iconColor: isOFD ? '#FF9500' : '#5856D6',
+      title: isOFD ? `📬 Out for delivery — ${s.carrier}` : `🚚 ${s.carrier} tracking added`,
+      sub: needsNotify
+        ? (s.contact_name ? `Notify ${s.contact_name} — ${s.tracking_number}` : `Send tracking #${s.tracking_number} to customer`)
+        : `${s.tracking_number}${s.estimated_delivery ? ' · ETA ' + s.estimated_delivery : ''}`,
+      urgent: isOFD,
+      onclick: `openShipment(${s.id})`
+    })
+  })
 
   // 1 — Overdue tasks (highest priority)
   ;(data.overdue_tasks || []).forEach(t => items.push({
@@ -291,6 +320,71 @@ function debounceSearch(q) {
 }
 
 // ── ORDERS PAGE ──────────────────────────────────────
+// ── ORDERS PAGE (shipments tab + POs tab) ────────────
+function filterOrders(tab, btn) {
+  state.ordersFilter = tab
+  document.querySelectorAll('#orders-seg .seg-btn').forEach(b => b.classList.remove('active'))
+  btn.classList.add('active')
+  if (tab === 'shipments') loadShipments()
+  else loadOrders()
+}
+
+async function loadShipments() {
+  const el = document.getElementById('orders-list')
+  el.innerHTML = `<div class="loading"><i class="fas fa-spinner fa-spin"></i></div>`
+  try {
+    const { data } = await axios.get(`${API}/shipments`, { params: { limit:50 } })
+    const ships = data.shipments || []
+    if (!ships.length) {
+      el.innerHTML = `
+        <div class="empty-state">
+          <i class="fas fa-truck" style="color:#D1D1D6"></i>
+          <p>No active shipments</p>
+          <p style="font-size:13px;color:#C7C7CC">Add tracking info when an order ships</p>
+        </div>`
+      return
+    }
+    el.innerHTML = ships.map(s => shipmentCard(s)).join('')
+  } catch {
+    el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading shipments</p></div>`
+  }
+}
+
+function shipmentCard(s) {
+  const SC = {
+    in_transit:'#5856D6', out_for_delivery:'#FF9500',
+    delivered:'#34C759', picked_up:'#007AFF',
+    label_created:'#8E8E93', pending:'#C7C7CC',
+    failed:'#FF3B30', returned:'#FF3B30'
+  }
+  const color = SC[s.status] || '#5856D6'
+  const emoji = {
+    in_transit:'🚚', out_for_delivery:'📬', delivered:'✅',
+    picked_up:'📦', label_created:'🏷️', failed:'⚠️'
+  }[s.status] || '📦'
+  const isDelivered = s.status === 'delivered'
+  return `
+    <div class="shipment-card ${isDelivered?'delivered':s.status==='out_for_delivery'?'out_for_delivery':''}" onclick="openShipment(${s.id})">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">
+        <div>
+          <div style="font-weight:700;font-size:16px;color:#1C1C1E">${s.carrier} ${emoji}</div>
+          <div style="font-size:13px;color:#8E8E93;margin-top:2px;font-family:monospace">${s.tracking_number}</div>
+        </div>
+        <span style="background:${color}20;color:${color};font-size:11px;font-weight:700;padding:4px 10px;border-radius:8px;letter-spacing:.04em;white-space:nowrap">${(s.status||'').replace(/_/g,' ').toUpperCase()}</span>
+      </div>
+      ${s.deal_title ? `<div style="font-size:13px;color:#3C3C43;font-weight:600;margin-bottom:4px"><i class="fas fa-handshake" style="color:#8E8E93;margin-right:5px"></i>${s.deal_title}</div>` : ''}
+      ${s.contact_name ? `<div style="font-size:13px;color:#8E8E93"><i class="fas fa-person" style="margin-right:5px"></i>${s.contact_name}</div>` : ''}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:.5px solid #E5E5EA">
+        ${s.estimated_delivery ? `<span style="font-size:12px;color:#8E8E93">ETA ${s.estimated_delivery}</span>` : `<span></span>`}
+        <div style="display:flex;align-items:center;gap:8px">
+          ${!s.customer_notified && !isDelivered ? `<span style="font-size:11px;font-weight:700;color:#FF9500;background:#FFF9EC;padding:3px 8px;border-radius:6px">Notify customer</span>` : ''}
+          ${s.tracking_url ? `<a href="${s.tracking_url}" target="_blank" onclick="event.stopPropagation()" style="font-size:12px;color:#007AFF;font-weight:600"><i class="fas fa-arrow-up-right-from-square"></i> Track</a>` : ''}
+        </div>
+      </div>
+    </div>
+  `
+}
+
 async function loadOrders() {
   const el = document.getElementById('orders-list')
   el.innerHTML = `<div class="loading"><i class="fas fa-spinner fa-spin"></i></div>`
@@ -301,8 +395,6 @@ async function loadOrders() {
       el.innerHTML = `<div class="empty-state"><i class="fas fa-box"></i><p>No orders yet</p></div>`
       return
     }
-
-    document.getElementById('orders-subtitle').textContent = `${pos.length} order${pos.length !== 1 ? 's' : ''}`
 
     const POC = {
       draft:'#8E8E93', quote_requested:'#FF9500', quote_received:'#007AFF',
@@ -329,9 +421,9 @@ async function loadOrders() {
             <div style="margin-top:10px;padding-top:10px;border-top:0.5px solid #E5E5EA;font-size:13px;color:#5856D6;font-weight:600">
               <i class="fas fa-truck" style="margin-right:6px"></i>${tracking[0]}
             </div>` : ''}
-          ${po.status === 'confirmed' ? `
-            <button onclick="event.stopPropagation();addTracking(${po.id})" class="btn btn-primary" style="margin-top:12px;font-size:14px;padding:12px">
-              <i class="fas fa-truck"></i> Add Tracking Number
+          ${po.status === 'confirmed' || po.status === 'shipped' ? `
+            <button onclick="event.stopPropagation();openTrackingSheet(${po.id},${po.deal_id||'null'},null)" class="btn btn-primary" style="margin-top:12px;font-size:14px;padding:12px">
+              <i class="fas fa-truck"></i> ${tracking.length ? 'Update Tracking' : 'Add Tracking Number'}
             </button>` : ''}
           ${po.status === 'draft' || po.status === 'approved' ? `
             <button onclick="event.stopPropagation();requestQuote(${po.id})" class="btn btn-purple" style="margin-top:12px;font-size:14px;padding:12px">
@@ -714,7 +806,7 @@ async function openPO(id) {
 
         <div style="display:flex;flex-direction:column;gap:10px">
           ${po.status==='draft'||po.status==='approved' ? `<button onclick="requestQuote(${po.id});closeSheet('sh-panel')" class="btn btn-purple"><i class="fas fa-paper-plane"></i> Request Quote from Supplier</button>` : ''}
-          ${po.status==='confirmed' ? `<button onclick="closeSheet('sh-panel');addTracking(${po.id})" class="btn btn-primary"><i class="fas fa-truck"></i> Add Tracking Number</button>` : ''}
+          ${po.status==='confirmed'||po.status==='shipped' ? `<button onclick="closeSheet('sh-panel');openTrackingSheet(${po.id},${po.deal_id||'null'},null)" class="btn btn-primary"><i class="fas fa-truck"></i> ${po.status==='shipped'?'View / Update Tracking':'Add Tracking Number'}</button>` : ''}
           <button onclick="promptPOStatus(${po.id})" class="btn btn-gray"><i class="fas fa-arrows-rotate"></i> Update Status</button>
         </div>
       </div>
@@ -733,6 +825,13 @@ async function moveStage(dealId, stage) {
     openDeal(dealId)
     if (state.page === 'home') loadHome()
     if (state.page === 'deals') loadDeals()
+    // Auto-prompt tracking entry when stage → shipping
+    if (stage === 'shipping') {
+      setTimeout(() => {
+        closeSheet('sh-deal')
+        setTimeout(() => openTrackingSheet(null, dealId, null), 350)
+      }, 600)
+    }
   } catch { toast('Error updating stage', 'error') }
 }
 
@@ -950,15 +1049,299 @@ async function requestQuote(poId) {
   } catch { toast('Error requesting quote', 'error') }
 }
 
-function addTracking(poId) {
-  const carrier = prompt('Carrier? (UPS, FedEx, USPS, Estes, XPO, Other)')
-  if (!carrier) return
-  const tracking = prompt('Tracking number:')
-  if (!tracking) return
-  axios.post(`${API}/purchase-orders/${poId}/add-tracking`, { carrier, tracking_number: tracking })
-    .then(() => { toast('Tracking added! Customer notified.', 'success'); loadOrders() })
-    .catch(() => toast('Error adding tracking', 'error'))
+// ── TRACKING SYSTEM ─────────────────────────────────
+function openTrackingSheet(poId, dealId, contactId) {
+  // Reset form
+  document.getElementById('form-tracking').reset()
+  document.getElementById('tracking-saved-actions').style.display = 'none'
+  document.getElementById('form-tracking').style.display = 'block'
+  document.getElementById('tracking-url-preview').style.display = 'none'
+  document.querySelectorAll('.carrier-chip').forEach(c => {
+    c.style.borderColor = '#E5E5EA'; c.style.background = '#F9F9F9'; c.style.color = '#1C1C1E'
+  })
+
+  // Set context
+  document.getElementById('tracking-po-id').value = poId || ''
+  document.getElementById('tracking-deal-id').value = dealId || ''
+  document.getElementById('tracking-contact-id').value = contactId || ''
+  trackingState.poId = poId; trackingState.dealId = dealId; trackingState.contactId = contactId
+
+  const sub = dealId && !poId ? `Deal #${dealId} — Enter tracking when order ships` :
+              poId ? `PO tracking info` : 'Enter shipment tracking details'
+  document.getElementById('tracking-entry-subtitle').textContent = sub
+
+  openSheet('sh-tracking-entry')
 }
+
+function selectCarrier(name) {
+  document.getElementById('tracking-carrier').value = name
+  document.querySelectorAll('.carrier-chip').forEach(c => {
+    const isThis = c.textContent.trim().toLowerCase().includes(name.toLowerCase().split(' ')[0].toLowerCase())
+    c.style.borderColor = isThis ? '#5856D6' : '#E5E5EA'
+    c.style.background  = isThis ? '#F5F3FF' : '#F9F9F9'
+    c.style.color       = isThis ? '#5856D6' : '#1C1C1E'
+  })
+  // Update URL preview
+  updateTrackingPreview()
+}
+
+function updateTrackingPreview() {
+  const carrier  = document.getElementById('tracking-carrier').value
+  const tracking = document.getElementById('tracking-number').value
+  const custom   = document.getElementById('tracking-url').value
+  if (!carrier || !tracking) { document.getElementById('tracking-url-preview').style.display = 'none'; return }
+  const url = custom || buildTrackingUrl(carrier, tracking)
+  document.getElementById('tracking-url-preview').style.display = 'block'
+  document.getElementById('tracking-url-preview-text').textContent = url
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('tracking-number')?.addEventListener('input', updateTrackingPreview)
+  document.getElementById('tracking-url')?.addEventListener('input', updateTrackingPreview)
+})
+
+function buildTrackingUrl(carrier, num) {
+  const c = carrier.toLowerCase()
+  if (c.includes('ups'))   return `https://www.ups.com/track?tracknum=${num}`
+  if (c.includes('fedex')) return `https://www.fedex.com/apps/fedextrack/?tracknumbers=${num}`
+  if (c.includes('usps'))  return `https://tools.usps.com/go/TrackConfirmAction?qtc_tLabels1=${num}`
+  if (c.includes('estes')) return `https://www.estes-express.com/myestes/shipment-tracking/?search=${num}`
+  if (c.includes('xpo'))   return `https://track.xpo.com/tracking?number=${num}`
+  return `https://www.google.com/search?q=${encodeURIComponent(carrier)}+tracking+${num}`
+}
+
+async function submitTracking(e) {
+  e.preventDefault()
+  const fd = new FormData(e.target)
+  const carrier        = fd.get('carrier')?.trim()
+  const trackingNumber = fd.get('tracking_number')?.trim()
+  const trackingUrl    = fd.get('tracking_url')?.trim() || ''
+  const estimatedDel   = fd.get('estimated_delivery') || ''
+  const notes          = fd.get('notes') || ''
+
+  if (!carrier || !trackingNumber) { toast('Carrier and tracking number required', 'error'); return }
+
+  const btn = e.target.querySelector('button[type=submit]')
+  btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…'
+
+  try {
+    let result
+    if (trackingState.poId) {
+      // Use PO endpoint
+      const { data } = await axios.post(`${API}/purchase-orders/${trackingState.poId}/add-tracking`, {
+        carrier, tracking_number: trackingNumber,
+        tracking_url: trackingUrl || undefined,
+        contact_id: trackingState.contactId || undefined,
+        estimated_delivery: estimatedDel || undefined,
+        notes: notes || undefined
+      })
+      trackingState.shipmentId = data.shipment_id
+      trackingState.trackingUrl = data.tracking_url
+    } else {
+      // Create shipment directly
+      const { data } = await axios.post(`${API}/shipments`, {
+        deal_id: trackingState.dealId || undefined,
+        contact_id: trackingState.contactId || undefined,
+        carrier, tracking_number: trackingNumber,
+        tracking_url: trackingUrl || undefined,
+        estimated_delivery: estimatedDel || undefined
+      })
+      trackingState.shipmentId = data.shipment?.id
+      trackingState.trackingUrl = data.tracking_url
+    }
+    trackingState.carrier = carrier
+    trackingState.trackingNumber = trackingNumber
+
+    // Show success + actions
+    document.getElementById('form-tracking').style.display = 'none'
+    const actEl = document.getElementById('tracking-saved-actions')
+    actEl.style.display = 'flex'
+    document.getElementById('tracking-saved-msg').textContent =
+      `${carrier} · ${trackingNumber}${estimatedDel ? ' · ETA ' + estimatedDel : ''}`
+
+    toast('📦 Tracking saved! Deal moved to In Transit.', 'success')
+    if (state.page === 'home') loadHome()
+    if (state.page === 'deals') loadDeals()
+    if (state.page === 'orders') { state.ordersFilter === 'shipments' ? loadShipments() : loadOrders() }
+  } catch(err) {
+    toast('Error saving tracking info', 'error')
+  } finally {
+    btn.disabled = false; btn.innerHTML = '<i class="fas fa-truck"></i> Save Tracking Info'
+  }
+}
+
+async function notifyCustomerTracking() {
+  if (!trackingState.shipmentId) return
+  try {
+    await axios.patch(`${API}/shipments/${trackingState.shipmentId}/notify-customer`)
+    toast('✅ Customer marked as notified!', 'success')
+  } catch { toast('Error updating notification status', 'error') }
+}
+
+function openAIDraftFromTracking() {
+  closeSheet('sh-tracking-entry')
+  setTimeout(() => {
+    aiDraftState.dealId = trackingState.dealId
+    aiDraftState.contactId = trackingState.contactId
+    aiDraftState.intent = `Share the shipment tracking information so the customer can monitor their delivery. Carrier: ${trackingState.carrier}, Tracking number: ${trackingState.trackingNumber}, Tracking link: ${trackingState.trackingUrl}`
+    document.querySelectorAll('.ai-intent-btn').forEach(b => b.classList.remove('selected'))
+    const shareBtn = document.querySelector('.ai-intent-btn:nth-child(5)')
+    if (shareBtn) shareBtn.classList.add('selected')
+    document.getElementById('ai-custom-intent').value = aiDraftState.intent
+    openSheet('sh-ai-draft')
+    openLogComm(trackingState.dealId, trackingState.contactId, 'email')
+  }, 350)
+}
+
+async function copyTrackingLink() {
+  const url = trackingState.trackingUrl
+  if (!url) return
+  try {
+    await navigator.clipboard.writeText(url)
+    toast('Tracking link copied!', 'success')
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = url; document.body.appendChild(ta); ta.select()
+    document.execCommand('copy'); document.body.removeChild(ta)
+    toast('Copied!', 'success')
+  }
+}
+
+// ── SHIPMENT DETAIL ──────────────────────────────────
+async function openShipment(id) {
+  openSheet('sh-shipment-detail')
+  const el = document.getElementById('sh-shipment-detail-body')
+  el.innerHTML = `<div class="loading" style="padding:80px"><i class="fas fa-spinner fa-spin"></i></div>`
+  try {
+    const { data } = await axios.get(`${API}/shipments/${id}`)
+    const s = data.shipment
+    const history = s.tracking_history || []
+    const SC = { in_transit:'#5856D6', out_for_delivery:'#FF9500', delivered:'#34C759', picked_up:'#007AFF', failed:'#FF3B30' }
+    const color = SC[s.status] || '#5856D6'
+    const isDelivered = s.status === 'delivered'
+
+    const statusEmoji = { in_transit:'🚚', out_for_delivery:'📬', delivered:'✅', picked_up:'📦', label_created:'🏷️', failed:'⚠️' }[s.status] || '📦'
+
+    el.innerHTML = `
+      <div class="sheet-header" style="margin-bottom:0">
+        <div style="flex:1;padding-right:8px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+            <div class="track-status-ring" style="background:${color}20">
+              <span style="font-size:26px">${statusEmoji}</span>
+            </div>
+            <div>
+              <div style="font-size:20px;font-weight:700;color:#1C1C1E">${s.carrier}</div>
+              <div style="font-size:13px;color:#8E8E93;font-family:monospace">${s.tracking_number}</div>
+            </div>
+          </div>
+          <span style="background:${color}20;color:${color};font-size:11px;font-weight:700;padding:4px 12px;border-radius:8px;letter-spacing:.04em">${(s.status||'').replace(/_/g,' ').toUpperCase()}</span>
+        </div>
+        <button class="sheet-close" onclick="closeSheet('sh-shipment-detail')" style="flex-shrink:0;align-self:flex-start"><i class="fas fa-xmark"></i></button>
+      </div>
+
+      <div class="sheet-body" style="padding-bottom:28px">
+
+        <!-- Info block -->
+        <div class="info-block" style="margin-bottom:14px">
+          ${s.deal_title ? `<div class="info-row"><i class="fas fa-handshake"></i><span style="font-weight:600">${s.deal_title}</span></div>` : ''}
+          ${s.contact_name ? `<div class="info-row"><i class="fas fa-person"></i><span>${s.contact_name}</span></div>` : ''}
+          ${s.estimated_delivery ? `<div class="info-row"><i class="fas fa-calendar-check"></i><span>ETA: ${s.estimated_delivery}</span></div>` : ''}
+          ${s.actual_delivery ? `<div class="info-row"><i class="fas fa-circle-check" style="color:#34C759"></i><span style="font-weight:600;color:#34C759">Delivered: ${s.actual_delivery}</span></div>` : ''}
+          <div class="info-row">
+            <i class="fas fa-bell" style="color:${s.customer_notified?'#34C759':'#FF9500'}"></i>
+            <span style="color:${s.customer_notified?'#34C759':'#FF9500'};font-weight:600">${s.customer_notified?'Customer notified ✓':'Customer NOT yet notified'}</span>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
+          ${s.tracking_url ? `
+            <a href="${s.tracking_url}" target="_blank" class="btn btn-primary">
+              <i class="fas fa-arrow-up-right-from-square"></i> Open Live Tracking
+            </a>` : ''}
+          ${!s.customer_notified && !isDelivered ? `
+            <button onclick="markShipmentNotified(${s.id})" class="btn btn-green">
+              <i class="fas fa-share"></i> Mark Customer as Notified
+            </button>` : ''}
+          ${isDelivered ? '' : `
+            <button onclick="markDelivered(${s.id})" class="btn btn-gray" style="color:#34C759">
+              <i class="fas fa-circle-check"></i> Mark as Delivered
+            </button>
+            <button onclick="markOutForDelivery(${s.id})" class="btn btn-gray" style="color:#FF9500">
+              <i class="fas fa-truck-fast"></i> Mark Out for Delivery
+            </button>`}
+        </div>
+
+        <!-- Tracking Timeline -->
+        <div class="section-head" style="padding:0 0 10px">Tracking Timeline</div>
+        ${history.length ? `
+          <div class="track-timeline">
+            ${history.map((evt, i) => `
+              <div class="track-event ${i===0?'active':''}">
+                <div class="track-event-time">${new Date(evt.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
+                <div class="track-event-desc">${evt.description || evt.status}</div>
+                ${evt.location ? `<div class="track-event-loc"><i class="fas fa-location-dot" style="margin-right:4px"></i>${evt.location}</div>` : ''}
+              </div>`).join('')}
+          </div>` : `
+          <div style="color:#8E8E93;font-size:14px;padding:16px">No tracking updates yet</div>`}
+
+        <!-- Manual status update -->
+        <div style="margin-top:20px;padding-top:16px;border-top:.5px solid #E5E5EA">
+          <div class="section-head" style="padding:0 0 10px">Manual Status Update</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            ${['in_transit','picked_up','out_for_delivery','delivered','failed'].map(st => `
+              <button onclick="updateShipmentStatus(${s.id},'${st}')" class="btn btn-gray" style="font-size:13px;padding:12px;${s.status===st?'background:#E5E5EA;font-weight:800':''}">${{in_transit:'🚚 In Transit',picked_up:'📦 Picked Up',out_for_delivery:'📬 Out for Delivery',delivered:'✅ Delivered',failed:'⚠️ Failed'}[st]}</button>`).join('')}
+          </div>
+        </div>
+
+      </div>
+    `
+  } catch {
+    el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading shipment</p></div>`
+  }
+}
+
+async function markDelivered(shipmentId) {
+  if (!confirm('Mark this shipment as delivered? This will update the deal to Delivered and create follow-up tasks.')) return
+  try {
+    const { data } = await axios.patch(`${API}/shipments/${shipmentId}/status`, { status:'delivered' })
+    toast(`🎉 Delivered! ${data.tasks_created} follow-up tasks created.`, 'success')
+    closeSheet('sh-shipment-detail')
+    if (state.page === 'orders') state.ordersFilter === 'shipments' ? loadShipments() : loadOrders()
+    if (state.page === 'home') loadHome()
+  } catch { toast('Error updating shipment', 'error') }
+}
+
+async function markOutForDelivery(shipmentId) {
+  try {
+    await axios.patch(`${API}/shipments/${shipmentId}/status`, { status:'out_for_delivery', description:'Package out for delivery today' })
+    toast('📬 Out for delivery!', 'success')
+    openShipment(shipmentId)
+    if (state.page === 'home') loadHome()
+  } catch { toast('Error updating shipment', 'error') }
+}
+
+async function updateShipmentStatus(shipmentId, status) {
+  try {
+    const { data } = await axios.patch(`${API}/shipments/${shipmentId}/status`, { status })
+    if (data.tasks_created > 0) toast(`Status updated · ${data.tasks_created} follow-up tasks created`, 'success')
+    else toast('Status updated', 'success')
+    openShipment(shipmentId)
+    if (state.page === 'home') loadHome()
+    if (state.page === 'orders') state.ordersFilter === 'shipments' ? loadShipments() : loadOrders()
+  } catch { toast('Error updating status', 'error') }
+}
+
+async function markShipmentNotified(shipmentId) {
+  try {
+    await axios.patch(`${API}/shipments/${shipmentId}/notify-customer`)
+    toast('✅ Customer marked as notified!', 'success')
+    openShipment(shipmentId)
+  } catch { toast('Error', 'error') }
+}
+
+// legacy alias for PO cards that still call addTracking
+function addTracking(poId) { openTrackingSheet(poId, null, null) }
 
 async function promptPOStatus(id) {
   const s = ['draft','quote_requested','quote_received','approved','submitted','confirmed','in_production','shipped','received','cancelled']
