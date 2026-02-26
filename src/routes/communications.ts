@@ -395,4 +395,124 @@ communications.post('/gmail-sync', async (c) => {
   }
 })
 
+// POST /api/communications/ai-draft  — AI-powered email draft
+communications.post('/ai-draft', async (c) => {
+  const { DB } = c.env
+  const body = await c.req.json()
+  // body: { deal_id?, contact_id?, intent, tone?, extra_context? }
+
+  try {
+    // ── Build rich context from DB ─────────────────────────
+    let dealCtx = ''
+    let contactCtx = ''
+
+    if (body.deal_id) {
+      const deal = await DB.prepare(`
+        SELECT d.*, c.first_name||' '||c.last_name as contact_name,
+          c.email as contact_email, c.mobile as contact_phone,
+          c.company_name
+        FROM deals d LEFT JOIN contacts c ON d.contact_id=c.id
+        WHERE d.id=?
+      `).bind(body.deal_id).first() as any
+      if (deal) {
+        dealCtx = `Deal: "${deal.title}", Stage: ${deal.stage}, Value: $${deal.value||0}` +
+          (deal.notes ? `, Notes: ${deal.notes}` : '')
+      }
+      if (deal?.contact_name && !body.contact_id) {
+        contactCtx = `Contact: ${deal.contact_name}` +
+          (deal.company_name ? ` at ${deal.company_name}` : '') +
+          (deal.contact_email ? `, email: ${deal.contact_email}` : '')
+      }
+    }
+
+    if (body.contact_id) {
+      const contact = await DB.prepare(`
+        SELECT first_name, last_name, company_name, email, type, notes FROM contacts WHERE id=?
+      `).bind(body.contact_id).first() as any
+      if (contact) {
+        contactCtx = `Contact: ${contact.first_name} ${contact.last_name}` +
+          (contact.company_name ? ` at ${contact.company_name}` : '') +
+          (contact.email ? `, email: ${contact.email}` : '') +
+          (contact.type ? `, type: ${contact.type}` : '')
+      }
+    }
+
+    // Pull last 3 comms for thread awareness
+    let threadCtx = ''
+    if (body.deal_id || body.contact_id) {
+      const filter = body.deal_id ? 'deal_id=?' : 'contact_id=?'
+      const filterId = body.deal_id || body.contact_id
+      const { results: recent } = await DB.prepare(`
+        SELECT type, direction, subject, body, sent_at
+        FROM communications
+        WHERE ${filter}
+        ORDER BY created_at DESC LIMIT 3
+      `).bind(filterId).all() as any
+      if (recent?.length) {
+        threadCtx = '\n\nRecent communication history:\n' + recent.map((r: any) =>
+          `- [${r.direction} ${r.type}] "${r.subject||'(no subject)'}" — ${r.body?.substring(0,120)||''}`
+        ).join('\n')
+      }
+    }
+
+    // ── OpenAI call ────────────────────────────────────────
+    const openaiKey = c.env.OPENAI_API_KEY
+    if (!openaiKey) {
+      // Fallback: return a template draft without AI
+      const fallbackSubject = body.intent || 'Follow up'
+      const fallbackBody = `Hi,\n\nI wanted to follow up regarding ${dealCtx||'your inquiry'}.\n\n${body.extra_context||''}\n\nPlease let me know if you have any questions.\n\nBest regards,\nAmberway Equine LLC\n(561) 555-0100\ninfo@amberwayequine.com`
+      return c.json({ success: true, ai: false, subject: fallbackSubject, body: fallbackBody, html: fallbackBody.replace(/\n/g,'<br>') })
+    }
+
+    const tone = body.tone || 'professional and friendly'
+    const systemPrompt = `You are an email assistant for Amberway Equine LLC, a premium equine equipment supplier. 
+Write emails that are ${tone}, concise, and helpful. Always sign off with the Amberway Equine team.
+Company: Amberway Equine LLC | Website: amberwayequine.com | Phone: (your number)
+Return ONLY a JSON object with keys "subject" (string) and "body" (string, plain text with \\n line breaks). No markdown, no code fences.`
+
+    const userPrompt = `${contactCtx ? contactCtx + '\n' : ''}${dealCtx ? dealCtx + '\n' : ''}${threadCtx}
+
+Task: ${body.intent}${body.extra_context ? '\nAdditional context: ' + body.extra_context : ''}
+
+Write a complete, ready-to-send email. Return JSON only.`
+
+    const aiResp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 800,
+        response_format: { type: 'json_object' }
+      })
+    })
+
+    if (!aiResp.ok) {
+      const errData = await aiResp.json() as any
+      throw new Error(errData.error?.message || 'OpenAI request failed')
+    }
+
+    const aiData = await aiResp.json() as any
+    const parsed = JSON.parse(aiData.choices[0].message.content)
+
+    return c.json({
+      success: true,
+      ai: true,
+      subject: parsed.subject || '',
+      body: parsed.body || '',
+      html: (parsed.body || '').replace(/\n/g, '<br>')
+    })
+
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500)
+  }
+})
+
 export default communications

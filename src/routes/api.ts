@@ -237,6 +237,117 @@ Format as JSON: {"summary": "...", "next_action": "...", "risk": "low|medium|hig
 })
 
 // ============================================================
+// AI EMAIL DRAFT
+// ============================================================
+api.post('/ai/draft-email', async (c) => {
+  const { DB } = c.env
+  const body = await c.req.json()
+  const { deal_id, contact_id, intent, tone = 'professional and friendly' } = body
+
+  // Load context
+  let deal: any = null
+  let contact: any = null
+
+  if (deal_id) {
+    deal = await DB.prepare(`
+      SELECT d.*, c.first_name || ' ' || c.last_name as contact_name,
+             c.email as contact_email,
+             COALESCE(co.name, '') as company_name
+      FROM deals d
+      LEFT JOIN contacts c ON d.contact_id = c.id
+      LEFT JOIN companies co ON d.company_id = co.id
+      WHERE d.id = ?
+    `).bind(deal_id).first()
+  }
+
+  if (contact_id && !contact) {
+    contact = await DB.prepare(`
+      SELECT c.*, COALESCE(co.name, '') as company_name
+      FROM contacts c
+      LEFT JOIN companies co ON c.company_id = co.id
+      WHERE c.id = ?
+    `).bind(contact_id).first()
+  }
+
+  // Gather recent comms for context
+  let recentComms: any[] = []
+  if (deal_id || contact_id) {
+    const commQuery = deal_id
+      ? `SELECT type, direction, subject, body FROM communications WHERE deal_id = ? ORDER BY created_at DESC LIMIT 4`
+      : `SELECT type, direction, subject, body FROM communications WHERE contact_id = ? ORDER BY created_at DESC LIMIT 4`
+    const { results } = await DB.prepare(commQuery).bind(deal_id || contact_id).all()
+    recentComms = results as any[]
+  }
+
+  const contactName = deal?.contact_name || (contact ? `${contact.first_name} ${contact.last_name}` : 'the customer')
+  const firstName = deal?.contact_name?.split(' ')[0] || contact?.first_name || 'there'
+  const company = deal?.company_name || contact?.company_name || ''
+  const stageLabel: Record<string, string> = {
+    lead: 'New Lead', qualified: 'Qualified', proposal_sent: 'Proposal Sent',
+    estimate_sent: 'Estimate Sent', estimate_accepted: 'Estimate Accepted',
+    invoice_sent: 'Invoice Sent', invoice_paid: 'Invoice Paid',
+    order_placed: 'Order Placed', order_confirmed: 'Order Confirmed',
+    shipping: 'In Transit', delivered: 'Delivered', completed: 'Completed'
+  }
+
+  const apiKey = c.env.OPENAI_API_KEY
+
+  if (apiKey) {
+    try {
+      const systemPrompt = `You are a helpful sales assistant for Amberway Equine LLC — a company specialising in high-quality barn & equine equipment (stalls, stall mats, fencing, lighting, fans, horse walkers, rubber flooring, arena equipment, etc.).
+
+Write emails that sound natural, warm and human. Never use corporate buzzwords. Keep it concise (under 200 words body). Always include a clear call-to-action.
+
+Return ONLY valid JSON in this exact shape:
+{"subject": "...", "body": "..."}`
+
+      const userPrompt = `Write an email with tone: ${tone}.
+
+Contact: ${contactName}${company ? ` (${company})` : ''}
+${deal ? `Deal: ${deal.title} | Stage: ${stageLabel[deal.stage] || deal.stage} | Value: $${deal.value || 0}` : ''}
+${recentComms.length ? `Recent comms: ${recentComms.map((r: any) => `[${r.type}/${r.direction}] ${r.subject || r.body?.substring(0, 60) || ''}`).join(' | ')}` : ''}
+
+What to communicate: ${intent}
+
+Use first name "${firstName}" in salutation. Sign off as the Amberway Equine team.`
+
+      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          max_tokens: 500,
+          response_format: { type: 'json_object' }
+        })
+      })
+
+      if (resp.ok) {
+        const aiData = await resp.json() as any
+        const parsed = JSON.parse(aiData.choices[0].message.content)
+        return c.json({ success: true, subject: parsed.subject, body: parsed.body, ai: true })
+      }
+    } catch (e) {
+      console.error('AI draft error:', e)
+    }
+  }
+
+  // ── Fallback: smart template ────────────────────────────────
+  const templates: Record<string, { subject: string; body: string }> = {
+    default: {
+      subject: `Following up — ${deal?.title || company || 'Your Project'}`,
+      body: `Hi ${firstName},\n\nI wanted to follow up and see how things are going on your end.\n\nPlease don't hesitate to reach out with any questions — we're here to help make your project a success.\n\nBest regards,\nAmberway Equine Team`
+    }
+  }
+
+  const tpl = templates.default
+  return c.json({ success: true, subject: tpl.subject, body: tpl.body, ai: false })
+})
+
+// ============================================================
 // NOTIFICATIONS
 // ============================================================
 api.get('/notifications', async (c) => {

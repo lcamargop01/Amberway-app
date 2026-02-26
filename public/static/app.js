@@ -1,1985 +1,1105 @@
-// Amberway Equine CRM - Frontend JavaScript
-// Complete SPA with full CRM functionality
-
+// Amberway Equine CRM — App Logic
 const API = '/api'
-let state = {
-  currentPage: 'dashboard',
-  contacts: [],
-  deals: [],
-  tasks: [],
-  companies: [],
-  suppliers: [],
-  products: [],
-  notifications: [],
-  pipelineChart: null,
-  revenueChart: null,
-  currentDeal: null,
-  commType: 'email',
-  poLineItems: []
+
+// ── STAGE CONFIG ────────────────────────────────────
+const S = {
+  lead:               { label:'New Lead',           color:'#636366', bg:'#F2F2F7', hex:'#8E8E93' },
+  qualified:          { label:'Qualified',           color:'#007AFF', bg:'#EEF4FF', hex:'#007AFF' },
+  proposal_sent:      { label:'Proposal Sent',       color:'#5856D6', bg:'#F5F3FF', hex:'#5856D6' },
+  estimate_sent:      { label:'Estimate Sent',       color:'#FF9500', bg:'#FFF9EC', hex:'#FF9500' },
+  estimate_accepted:  { label:'Estimate Accepted',   color:'#34C759', bg:'#F0FDF4', hex:'#34C759' },
+  invoice_sent:       { label:'Invoice Sent',        color:'#00C7BE', bg:'#F0FFFE', hex:'#00C7BE' },
+  invoice_paid:       { label:'Invoice Paid ✓',      color:'#34C759', bg:'#F0FDF4', hex:'#34C759' },
+  order_placed:       { label:'Order Placed',        color:'#30D158', bg:'#F0FDF6', hex:'#30D158' },
+  order_confirmed:    { label:'Order Confirmed',     color:'#32ADE6', bg:'#EFF9FF', hex:'#32ADE6' },
+  shipping:           { label:'In Transit 🚚',       color:'#5856D6', bg:'#F5F3FF', hex:'#5856D6' },
+  delivered:          { label:'Delivered ✓',         color:'#34C759', bg:'#F0FDF4', hex:'#34C759' },
+  completed:          { label:'Completed 🎉',        color:'#34C759', bg:'#F0FDF4', hex:'#34C759' },
+  lost:               { label:'Lost',                color:'#FF3B30', bg:'#FFF1F0', hex:'#FF3B30' },
+  on_hold:            { label:'On Hold',             color:'#8E8E93', bg:'#F2F2F7', hex:'#8E8E93' },
 }
 
-const STAGE_LABELS = {
-  lead: 'New Lead', qualified: 'Qualified', proposal_sent: 'Proposal Sent',
-  estimate_sent: 'Estimate Sent', estimate_accepted: 'Estimate Accepted',
-  invoice_sent: 'Invoice Sent', invoice_paid: 'Invoice Paid',
-  order_placed: 'Order Placed', order_confirmed: 'Order Confirmed',
-  shipping: 'Shipping', delivered: 'Delivered', completed: 'Completed',
-  lost: 'Lost', on_hold: 'On Hold'
+const NEXT = {
+  lead:               { label:'Call to qualify',            icon:'fa-phone',         urgent:false },
+  qualified:          { label:'Send estimate',              icon:'fa-file-lines',    urgent:false },
+  proposal_sent:      { label:'Follow up — no reply yet?',  icon:'fa-reply',         urgent:false },
+  estimate_sent:      { label:'Follow up on estimate',      icon:'fa-clock',         urgent:false },
+  estimate_accepted:  { label:'Send invoice NOW',           icon:'fa-dollar-sign',   urgent:true  },
+  invoice_sent:       { label:'Follow up on payment',       icon:'fa-credit-card',   urgent:false },
+  invoice_paid:       { label:'Place order TODAY',          icon:'fa-cart-shopping', urgent:true  },
+  order_placed:       { label:'Confirm with supplier',      icon:'fa-phone',         urgent:false },
+  order_confirmed:    { label:'Get shipping ETA',           icon:'fa-truck',         urgent:false },
+  shipping:           { label:'Send tracking to customer',  icon:'fa-share',         urgent:false },
+  delivered:          { label:'Confirm delivery OK',        icon:'fa-circle-check',  urgent:false },
+  completed:          { label:'Ask for a referral',         icon:'fa-star',          urgent:false },
 }
 
-const STAGE_COLORS = {
-  lead: '#6B7280', qualified: '#3B82F6', proposal_sent: '#8B5CF6',
-  estimate_sent: '#F59E0B', estimate_accepted: '#10B981', invoice_sent: '#06B6D4',
-  invoice_paid: '#22C55E', order_placed: '#84CC16', order_confirmed: '#14B8A6',
-  shipping: '#6366F1', delivered: '#059669', completed: '#16A34A',
-  lost: '#EF4444', on_hold: '#9CA3AF'
-}
+const PC = { urgent:'#FF3B30', high:'#FF9500', medium:'#FF9500', low:'#8E8E93' }
+const PBG = { urgent:'#FFF1F0', high:'#FFF9EC', medium:'#F9F9F9', low:'#F2F2F7' }
 
-const PRIORITY_COLORS = { low: '#94a3b8', medium: '#f59e0b', high: '#ef4444', urgent: '#dc2626' }
-const COMM_ICONS = { email: 'fa-envelope', sms: 'fa-sms', call: 'fa-phone', note: 'fa-sticky-note', meeting: 'fa-calendar' }
-const PO_STATUS_COLORS = {
-  draft: '#94a3b8', quote_requested: '#f59e0b', quote_received: '#3b82f6',
-  approved: '#8b5cf6', submitted: '#06b6d4', confirmed: '#10b981',
-  in_production: '#84cc16', shipped: '#6366f1', partially_received: '#f97316',
-  received: '#22c55e', cancelled: '#ef4444'
-}
+const state = { page:'home', dealsFilter:'active', tasksFilter:'pending', ctab:'email' }
 
-// ============================================================
-// CORE NAVIGATION
-// ============================================================
-function showPage(page) {
+// ── NAVIGATION ───────────────────────────────────────
+function navTo(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'))
-  document.querySelectorAll('.sidebar-link').forEach(l => l.classList.remove('active'))
-  
-  const pageEl = document.getElementById(`page-${page}`)
-  if (pageEl) pageEl.classList.add('active')
-  
-  const links = document.querySelectorAll('.sidebar-link')
-  links.forEach(l => {
-    if (l.getAttribute('onclick') && l.getAttribute('onclick').includes(`'${page}'`)) {
-      l.classList.add('active')
-    }
-  })
-  
-  state.currentPage = page
-  loadPageData(page)
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'))
+  document.getElementById('page-'+name)?.classList.add('active')
+  document.getElementById('ni-'+name)?.classList.add('active')
+  state.page = name
+  const loaders = { home: loadHome, deals: loadDeals, contacts: loadContacts, orders: loadOrders, tasks: loadTasks }
+  loaders[name]?.()
 }
 
-function loadPageData(page) {
-  switch(page) {
-    case 'dashboard': loadDashboard(); break
-    case 'pipeline': loadPipeline(); break
-    case 'contacts': loadContacts(); break
-    case 'companies': loadCompanies(); break
-    case 'tasks': loadTasks('pending'); break
-    case 'communications': loadCommunications(); break
-    case 'estimates': loadEstimates(); break
-    case 'invoices': loadInvoices(); break
-    case 'purchase-orders': loadPurchaseOrders(); break
-    case 'shipments': loadShipments(); break
-    case 'settings': loadSettings(); break
-  }
+// ── SHEETS ───────────────────────────────────────────
+function openSheet(id) {
+  const bdId = id.replace('sh-', 'bd-')
+  document.getElementById(bdId)?.classList.add('open')
+  requestAnimationFrame(() => document.getElementById(id)?.classList.add('open'))
+}
+function closeSheet(id) {
+  document.getElementById(id)?.classList.remove('open')
+  document.getElementById(id.replace('sh-','bd-'))?.classList.remove('open')
 }
 
-// ============================================================
-// DASHBOARD
-// ============================================================
-async function loadDashboard() {
+// ── HOME ─────────────────────────────────────────────
+async function loadHome() {
+  const h = new Date().getHours()
+  document.getElementById('hdr-greet').textContent = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
+  document.getElementById('hdr-date').textContent = new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' })
+
   try {
     const { data } = await axios.get(`${API}/dashboard`)
-    renderKPIs(data.kpis)
-    renderPipelineChart(data.deals_by_stage)
-    renderRevenueChart(data.revenue_trend)
-    renderDashTasks(data.overdue_tasks, data.due_today)
-    renderDashActivity(data.recent_activity)
-    renderDashPOs(data.active_pos)
-    renderDashNotifications(data.notifications)
-    updateNotifBadge(data.kpis.unread_notifications?.count || 0)
-    updateTasksBadge(data.overdue_tasks?.length || 0)
+
+    document.getElementById('k-deals').textContent = data.kpis?.active_deals?.count ?? 0
+    const taskCount = (data.overdue_tasks?.length || 0) + (data.due_today?.length || 0)
+    document.getElementById('k-tasks').textContent = taskCount
+    document.getElementById('k-pipe').textContent = '$' + fmtMoney(data.kpis?.active_deals?.total || 0)
+
+    // Badge
+    const badge = document.getElementById('task-badge')
+    if (taskCount > 0) { badge.textContent = taskCount; badge.classList.add('show') }
+    else badge.classList.remove('show')
+
+    renderActions(data)
+    renderHomeDeals()
   } catch(e) {
-    console.error('Dashboard error:', e)
+    document.getElementById('home-actions').innerHTML = `<div class="loading" style="color:#C7C7CC"><i class="fas fa-horse"></i></div>`
   }
 }
 
-function renderKPIs(kpis) {
-  const el = document.getElementById('kpi-cards')
-  if (!kpis) return
-  
-  const cards = [
-    { label: 'Active Deals', value: kpis.active_deals?.count || 0, sub: `$${fmtNum(kpis.active_deals?.total || 0)} pipeline`, icon: 'fa-handshake', color: 'indigo', onclick: "showPage('pipeline')" },
-    { label: 'Total Contacts', value: kpis.total_contacts?.count || 0, sub: 'Customers & leads', icon: 'fa-users', color: 'blue', onclick: "showPage('contacts')" },
-    { label: 'Open Invoices', value: kpis.open_invoices?.count || 0, sub: `$${fmtNum(kpis.open_invoices?.total || 0)} outstanding`, icon: 'fa-dollar-sign', color: 'green', onclick: "showPage('invoices')" },
-    { label: 'Active Orders', value: kpis.pending_pos?.count || 0, sub: 'Purchase orders', icon: 'fa-shipping-fast', color: 'orange', onclick: "showPage('purchase-orders')" }
-  ]
-  
-  const colorMap = { indigo: '#6366f1', blue: '#3b82f6', green: '#22c55e', orange: '#f59e0b' }
-  el.innerHTML = cards.map(c => `
-    <div class="card cursor-pointer hover:shadow-md transition-shadow" onclick="${c.onclick}">
-      <div class="flex items-center justify-between mb-2">
-        <div style="width:40px;height:40px;background:${colorMap[c.color]}20;border-radius:10px;display:flex;align-items:center;justify-content:center">
-          <i class="fas ${c.icon}" style="color:${colorMap[c.color]}"></i>
+function renderActions(data) {
+  const el = document.getElementById('home-actions')
+  const items = []
+
+  ;(data.overdue_tasks || []).forEach(t => items.push({
+    bg:'#FFF1F0', color:'#FF3B30', icon:'fa-exclamation-circle',
+    title: t.title,
+    sub: `${t.deal_title || t.contact_name || 'No deal'} · Overdue`,
+    urgent: true,
+    onclick: `openTaskPanel('${encodeURIComponent(JSON.stringify(t))}')`
+  }))
+
+  ;(data.due_today || []).forEach(t => items.push({
+    bg:'#FFF9EC', color:'#FF9500', icon:'fa-clock',
+    title: t.title,
+    sub: `${t.deal_title || t.contact_name || 'No deal'} · Due today`,
+    urgent: false,
+    onclick: `openTaskPanel('${encodeURIComponent(JSON.stringify(t))}')`
+  }))
+
+  ;(data.active_pos || []).filter(p => p.status === 'approved').forEach(po => items.push({
+    bg:'#F0FDF4', color:'#34C759', icon:'fa-cart-shopping',
+    title: `Place order: ${po.deal_title || po.po_number}`,
+    sub: `Supplier: ${po.supplier_name} · Invoice paid`,
+    urgent: true,
+    onclick: `openPO(${po.id})`
+  }))
+
+  if (!items.length) {
+    el.innerHTML = `
+      <div class="all-good">
+        <div style="width:42px;height:42px;background:#BBF7D0;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <i class="fas fa-check" style="color:#15803D;font-size:18px"></i>
         </div>
-      </div>
-      <div class="text-3xl font-bold text-slate-800">${c.value}</div>
-      <div class="text-sm text-slate-500 mt-1">${c.label}</div>
-      <div class="text-xs text-slate-400 mt-1">${c.sub}</div>
-    </div>
-  `).join('')
-}
-
-function renderPipelineChart(data) {
-  const ctx = document.getElementById('pipelineChart')
-  if (!ctx) return
-  if (state.pipelineChart) state.pipelineChart.destroy()
-  
-  const labels = (data || []).map(d => STAGE_LABELS[d.stage] || d.stage)
-  const values = (data || []).map(d => d.count)
-  const colors = (data || []).map(d => STAGE_COLORS[d.stage] || '#94a3b8')
-  
-  state.pipelineChart = new Chart(ctx, {
-    type: 'bar',
-    data: { labels, datasets: [{ data: values, backgroundColor: colors, borderRadius: 6 }] },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } }, x: { ticks: { font: { size: 11 } } } }
-    }
-  })
-}
-
-function renderRevenueChart(data) {
-  const ctx = document.getElementById('revenueChart')
-  if (!ctx) return
-  if (state.revenueChart) state.revenueChart.destroy()
-  
-  const sorted = (data || []).reverse()
-  const labels = sorted.map(d => d.month || '')
-  const values = sorted.map(d => d.revenue || 0)
-  
-  state.revenueChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label: 'Revenue', data: values,
-        borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,0.1)',
-        fill: true, tension: 0.4, borderWidth: 2, pointRadius: 4
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, ticks: { callback: v => '$' + fmtNum(v) } } }
-    }
-  })
-}
-
-function renderDashTasks(overdue, dueToday) {
-  const el = document.getElementById('dash-tasks')
-  const all = [...(overdue || []).map(t => ({...t, _overdue: true})), ...(dueToday || [])]
-  
-  if (!all.length) {
-    el.innerHTML = '<div class="text-center py-6 text-slate-400"><i class="fas fa-check-circle text-2xl mb-2"></i><br>No urgent tasks!</div>'
+        <div>
+          <div style="font-weight:700;font-size:16px;color:#15803D">All caught up!</div>
+          <div style="font-size:13px;color:#4ADE80;margin-top:2px">Nothing urgent right now</div>
+        </div>
+      </div>`
     return
   }
-  
-  el.innerHTML = all.map(t => `
-    <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onclick="showTaskActions(${t.id})">
-      <div class="w-2 h-2 rounded-full mt-2 flex-shrink-0" style="background:${PRIORITY_COLORS[t.priority] || '#94a3b8'}"></div>
-      <div class="flex-1 min-w-0">
-        <div class="text-sm font-medium text-slate-700 truncate">${t.title}</div>
-        <div class="text-xs text-slate-400">${t.deal_title || t.contact_name || ''} · ${t._overdue ? '<span class="text-red-500">Overdue</span>' : 'Due today'}</div>
+
+  el.innerHTML = `<div class="inset-list" style="margin:0 16px">` +
+    items.map(item => `
+      <div class="action-card" onclick="${item.onclick}">
+        <div class="icon-circle" style="background:${item.bg}">
+          <i class="fas ${item.icon}" style="color:${item.color}"></i>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="row-main">${item.title}</div>
+          <div class="row-sub">${item.sub}</div>
+        </div>
+        ${item.urgent
+          ? `<span class="urgent-badge">URGENT</span>`
+          : `<i class="fas fa-chevron-right row-chevron"></i>`}
       </div>
-      <div class="flex gap-1">
-        <button class="btn btn-xs btn-success" onclick="event.stopPropagation();completeTask(${t.id})">Done</button>
-        <button class="btn btn-xs btn-secondary" onclick="event.stopPropagation();snoozeTask(${t.id}, 1)">+1d</button>
-      </div>
-    </div>
-  `).join('')
+    `).join('') + `</div>`
 }
 
-function renderDashActivity(activities) {
-  const el = document.getElementById('dash-activity')
-  if (!activities?.length) { el.innerHTML = '<div class="text-slate-400 text-sm text-center py-4">No recent activity</div>'; return }
-  
-  el.innerHTML = activities.map(a => `
-    <div class="flex gap-3 items-start py-2 border-b border-slate-50">
-      <div class="w-7 h-7 rounded-full bg-indigo-50 flex items-center justify-center flex-shrink-0">
-        <i class="fas ${getActionIcon(a.action)} text-indigo-400 text-xs"></i>
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="text-sm text-slate-700">${a.description || a.action}</div>
-        <div class="text-xs text-slate-400">${a.deal_title || a.contact_name || ''} · ${timeAgo(a.created_at)}</div>
-      </div>
-    </div>
-  `).join('')
-}
-
-function renderDashPOs(pos) {
-  const el = document.getElementById('dash-pos')
-  if (!pos?.length) { el.innerHTML = '<div class="text-slate-400 text-sm text-center py-4">No active orders</div>'; return }
-  
-  el.innerHTML = pos.map(po => `
-    <div class="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg cursor-pointer" onclick="showPODetail(${po.id})">
-      <div class="flex-1 min-w-0">
-        <div class="text-sm font-medium text-slate-700">${po.po_number}</div>
-        <div class="text-xs text-slate-400">${po.supplier_name} · ${po.deal_title || ''}</div>
-      </div>
-      <span class="stage-badge text-xs font-medium" style="background:${PO_STATUS_COLORS[po.status] || '#94a3b8'}20;color:${PO_STATUS_COLORS[po.status] || '#94a3b8'}">${po.status?.replace(/_/g,' ')}</span>
-    </div>
-  `).join('')
-}
-
-function renderDashNotifications(notifs) {
-  const el = document.getElementById('dash-notifications')
-  if (!notifs?.length) { el.innerHTML = '<div class="text-slate-400 text-sm text-center py-4"><i class="fas fa-bell-slash mb-2"></i><br>All caught up!</div>'; return }
-  
-  el.innerHTML = notifs.map(n => `
-    <div class="flex gap-3 items-start p-2 hover:bg-slate-50 rounded-lg ${n.read ? 'opacity-60' : ''} cursor-pointer" onclick="markNotifRead(${n.id})">
-      <div class="w-2 h-2 rounded-full mt-2 flex-shrink-0 ${n.read ? 'bg-slate-300' : getNotifColor(n.type)}"></div>
-      <div class="flex-1 min-w-0">
-        <div class="text-sm font-medium text-slate-700">${n.title}</div>
-        <div class="text-xs text-slate-400">${n.message || ''} · ${timeAgo(n.created_at)}</div>
-      </div>
-    </div>
-  `).join('')
-}
-
-// ============================================================
-// PIPELINE KANBAN
-// ============================================================
-async function loadPipeline() {
+async function renderHomeDeals() {
+  const el = document.getElementById('home-deals')
   try {
-    const { data } = await axios.get(`${API}/deals/pipeline`)
-    renderKanban(data.pipeline, data.stages)
-  } catch(e) { console.error(e) }
+    const { data } = await axios.get(`${API}/deals`, { params: { status:'active', limit:50 } })
+    if (!data.deals?.length) {
+      el.innerHTML = `<div class="empty-state"><i class="fas fa-handshake"></i><p>No active deals yet.<br>Tap + to add your first one.</p></div>`
+      return
+    }
+    const sorted = [...data.deals].sort((a,b) => {
+      const p = { urgent:0, high:1, medium:2, low:3 }
+      return (p[a.priority]??2) - (p[b.priority]??2) || (b.value||0) - (a.value||0)
+    })
+    el.innerHTML = sorted.map(d => dealCard(d)).join('')
+  } catch { el.innerHTML = '' }
 }
 
-function renderKanban(pipeline, stages) {
-  const el = document.getElementById('pipeline-kanban')
-  const visibleStages = ['lead','qualified','proposal_sent','estimate_sent','estimate_accepted','invoice_sent','invoice_paid','order_placed','order_confirmed','shipping','delivered']
-  
-  el.innerHTML = visibleStages.map(stage => {
-    const deals = pipeline[stage] || []
-    const total = deals.reduce((s, d) => s + (d.value || 0), 0)
-    const color = STAGE_COLORS[stage] || '#94a3b8'
-    
-    return `
-      <div class="kanban-col flex-shrink-0">
-        <div class="flex items-center justify-between mb-3 px-1">
-          <div class="flex items-center gap-2">
-            <div class="w-3 h-3 rounded-full" style="background:${color}"></div>
-            <span class="text-xs font-semibold text-slate-600">${STAGE_LABELS[stage] || stage}</span>
+// ── DEAL CARD ────────────────────────────────────────
+function dealCard(d) {
+  const st = S[d.stage] || S.lead
+  const nx = NEXT[d.stage] || {}
+  return `
+    <div class="deal-card" style="border-left-color:${st.hex}" onclick="openDeal(${d.id})">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div class="deal-title" style="flex:1">${d.title}</div>
+        ${d.value > 0 ? `<div class="deal-value" style="white-space:nowrap">$${fmtMoney(d.value)}</div>` : ''}
+      </div>
+      ${d.contact_name ? `<div class="deal-contact"><i class="fas fa-user" style="margin-right:5px;font-size:11px"></i>${d.contact_name}</div>` : ''}
+      <div class="deal-footer">
+        <span class="stage-tag" style="background:${st.bg};color:${st.color}">${st.label}</span>
+        ${nx.label ? `
+          <div class="next-action" style="color:${nx.urgent ? '#FF3B30' : '#8E8E93'}">
+            <i class="fas ${nx.icon}" style="font-size:11px"></i>
+            <span>${nx.label}</span>
           </div>
-          <div class="flex items-center gap-1">
-            <span class="badge" style="background:${color}20;color:${color}">${deals.length}</span>
+        ` : ''}
+      </div>
+    </div>
+  `
+}
+
+// ── PIPELINE PAGE ────────────────────────────────────
+async function loadDeals() {
+  const el = document.getElementById('deals-list')
+  el.innerHTML = `<div class="loading"><i class="fas fa-spinner fa-spin"></i></div>`
+  try {
+    const { data } = await axios.get(`${API}/deals`, { params: { status: state.dealsFilter, limit:100 } })
+    if (!data.deals?.length) {
+      el.innerHTML = `<div class="empty-state"><i class="fas fa-handshake"></i><p>No ${state.dealsFilter} deals</p></div>`
+      return
+    }
+    el.innerHTML = data.deals.map(d => dealCard(d)).join('')
+  } catch {
+    el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading deals</p></div>`
+  }
+}
+
+function filterDeals(f, btn) {
+  state.dealsFilter = f
+  document.querySelectorAll('#deals-seg .seg-btn').forEach(b => b.classList.remove('active'))
+  btn.classList.add('active')
+  loadDeals()
+}
+
+// ── CONTACTS PAGE ────────────────────────────────────
+async function loadContacts(q = '') {
+  const el = document.getElementById('contacts-list')
+  el.innerHTML = `<div class="loading"><i class="fas fa-spinner fa-spin"></i></div>`
+  try {
+    const { data } = await axios.get(`${API}/contacts`, { params: { search:q, limit:100 } })
+    if (!data.contacts?.length) {
+      el.innerHTML = `<div class="empty-state"><i class="fas fa-users"></i><p>No contacts found</p></div>`
+      return
+    }
+    const sorted = [...data.contacts].sort((a,b) => (a.last_name||'').localeCompare(b.last_name||''))
+    el.innerHTML = `<div class="inset-list" style="margin:0 16px">` + sorted.map(c => contactRow(c)).join('') + `</div>`
+  } catch {
+    el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading</p></div>`
+  }
+}
+
+function contactRow(c) {
+  const init = `${c.first_name?.[0]||''}${c.last_name?.[0]||''}`
+  const avatarColors = [
+    ['#DBEAFE','#1D4ED8'],['#DCF5E7','#15803D'],['#FCE7F3','#9D174D'],
+    ['#FEF9C3','#854D0E'],['#EDE9FE','#6D28D9'],['#FEE2E2','#991B1B']
+  ]
+  const [bg, fg] = avatarColors[(c.id||0) % avatarColors.length]
+  const typeDot = { lead:'#8E8E93', prospect:'#007AFF', customer:'#34C759' }
+  const tColor = typeDot[c.type] || '#8E8E93'
+
+  return `
+    <div class="contact-row" onclick="openContact(${c.id})">
+      <div class="avatar" style="background:${bg};color:${fg}">${init}</div>
+      <div style="flex:1;min-width:0">
+        <div class="row-main">${c.first_name} ${c.last_name}</div>
+        <div class="row-sub">${c.company_name ? c.company_name + ' · ' : ''}${c.mobile || c.phone || c.email || ''}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        <span style="width:8px;height:8px;border-radius:50%;background:${tColor};display:block;margin-top:2px"></span>
+        ${c.last_contacted_at ? `<span style="font-size:11px;color:#C7C7CC">${timeAgo(c.last_contacted_at)}</span>` : ''}
+        <i class="fas fa-chevron-right row-chevron"></i>
+      </div>
+    </div>
+  `
+}
+
+let _st = null
+function debounceSearch(q) {
+  clearTimeout(_st)
+  _st = setTimeout(() => loadContacts(q), 280)
+}
+
+// ── ORDERS PAGE ──────────────────────────────────────
+async function loadOrders() {
+  const el = document.getElementById('orders-list')
+  el.innerHTML = `<div class="loading"><i class="fas fa-spinner fa-spin"></i></div>`
+  try {
+    const { data } = await axios.get(`${API}/purchase-orders`, { params: { limit:50 } })
+    const pos = data.purchase_orders || []
+    if (!pos.length) {
+      el.innerHTML = `<div class="empty-state"><i class="fas fa-box"></i><p>No orders yet</p></div>`
+      return
+    }
+
+    document.getElementById('orders-subtitle').textContent = `${pos.length} order${pos.length !== 1 ? 's' : ''}`
+
+    const POC = {
+      draft:'#8E8E93', quote_requested:'#FF9500', quote_received:'#007AFF',
+      approved:'#5856D6', submitted:'#32ADE6', confirmed:'#34C759',
+      in_production:'#30D158', shipped:'#5856D6', partially_received:'#FF9500',
+      received:'#34C759', cancelled:'#FF3B30'
+    }
+
+    el.innerHTML = pos.map(po => {
+      const color = POC[po.status] || '#8E8E93'
+      const tracking = safeJson(po.tracking_numbers, [])
+      return `
+        <div class="po-card" style="border-left-color:${color}" onclick="openPO(${po.id})">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px">
+            <div style="font-weight:700;font-size:16px;color:#1C1C1E">${po.po_number}</div>
+            <div style="font-weight:700;color:#34C759;font-size:16px">$${fmtMoney(po.total)}</div>
+          </div>
+          <div style="font-size:13px;color:#8E8E93;margin-bottom:12px">${po.supplier_name||'—'}${po.deal_title ? ' · ' + po.deal_title : ''}</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+            <span style="background:${color}20;color:${color};font-size:11px;font-weight:700;padding:4px 10px;border-radius:8px;letter-spacing:0.04em">${(po.status||'').replace(/_/g,' ').toUpperCase()}</span>
+            ${po.expected_delivery ? `<span style="font-size:12px;color:#8E8E93">ETA ${po.expected_delivery}</span>` : ''}
+          </div>
+          ${tracking.length ? `
+            <div style="margin-top:10px;padding-top:10px;border-top:0.5px solid #E5E5EA;font-size:13px;color:#5856D6;font-weight:600">
+              <i class="fas fa-truck" style="margin-right:6px"></i>${tracking[0]}
+            </div>` : ''}
+          ${po.status === 'confirmed' ? `
+            <button onclick="event.stopPropagation();addTracking(${po.id})" class="btn btn-primary" style="margin-top:12px;font-size:14px;padding:12px">
+              <i class="fas fa-truck"></i> Add Tracking Number
+            </button>` : ''}
+          ${po.status === 'draft' || po.status === 'approved' ? `
+            <button onclick="event.stopPropagation();requestQuote(${po.id})" class="btn btn-purple" style="margin-top:12px;font-size:14px;padding:12px">
+              <i class="fas fa-paper-plane"></i> Request Quote
+            </button>` : ''}
+        </div>
+      `
+    }).join('')
+  } catch {
+    el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading orders</p></div>`
+  }
+}
+
+// ── TASKS PAGE ───────────────────────────────────────
+async function loadTasks() {
+  const el = document.getElementById('tasks-list')
+  el.innerHTML = `<div class="loading"><i class="fas fa-spinner fa-spin"></i></div>`
+  try {
+    const status = state.tasksFilter === 'done' ? 'completed' : 'pending'
+    const { data } = await axios.get(`${API}/tasks`, { params: { status, limit:100 } })
+    const tasks = data.tasks || []
+    if (!tasks.length) {
+      el.innerHTML = `<div class="empty-state"><i class="fas fa-circle-check"></i><p>${state.tasksFilter === 'done' ? 'No completed tasks' : 'No pending tasks!'}</p></div>`
+      return
+    }
+
+    el.innerHTML = `<div class="inset-list" style="margin:0 16px">` + tasks.map(t => {
+      const ov = t.due_date && new Date(t.due_date) < new Date() && t.status !== 'completed'
+      const pc = PC[t.priority] || '#8E8E93'
+      const enc = encodeURIComponent(JSON.stringify(t))
+      return `
+        <div class="task-row" onclick="openTaskPanel('${enc}')">
+          <div class="task-check${t.status==='completed'?' done':''}" onclick="event.stopPropagation();completeTask(${t.id},this)">
+            ${t.status === 'completed' ? `<i class="fas fa-check" style="font-size:11px;color:#fff"></i>` : ''}
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:15px;font-weight:600;color:${t.status==='completed'?'#C7C7CC':'#1C1C1E'};${t.status==='completed'?'text-decoration:line-through':''};line-height:1.3">${t.title}</div>
+            <div style="font-size:12px;color:${ov?'#FF3B30':'#8E8E93'};margin-top:3px">
+              ${t.deal_title ? t.deal_title + ' · ' : ''}${t.due_date ? (ov ? '⚠️ Overdue · ' : '') + new Date(t.due_date).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : 'No date'}
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span style="font-size:11px;font-weight:700;color:${pc}">${(t.priority||'medium').toUpperCase()}</span>
           </div>
         </div>
-        ${total > 0 ? `<div class="text-xs text-slate-400 px-1 mb-2">$${fmtNum(total)}</div>` : ''}
-        <div class="space-y-2 min-h-20">
-          ${deals.map(d => renderKanbanCard(d)).join('')}
+      `
+    }).join('') + `</div>`
+
+    const overdueCount = tasks.filter(t => t.due_date && new Date(t.due_date) < new Date() && t.status !== 'completed').length
+    const badge = document.getElementById('task-badge')
+    if (overdueCount > 0) { badge.textContent = overdueCount; badge.classList.add('show') }
+    else badge.classList.remove('show')
+  } catch {
+    el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading tasks</p></div>`
+  }
+}
+
+function filterTasks(f, btn) {
+  state.tasksFilter = f
+  document.querySelectorAll('#tasks-seg .seg-btn').forEach(b => b.classList.remove('active'))
+  btn.classList.add('active')
+  loadTasks()
+}
+
+// ── DEAL DETAIL ──────────────────────────────────────
+async function openDeal(id) {
+  openSheet('sh-deal')
+  const el = document.getElementById('sh-deal-body')
+  el.innerHTML = `<div class="loading" style="padding:60px"><i class="fas fa-spinner fa-spin"></i></div>`
+  try {
+    const { data } = await axios.get(`${API}/deals/${id}`)
+    const d = data.deal
+    const st = S[d.stage] || S.lead
+    const nx = NEXT[d.stage] || {}
+    const comms = (data.communications || []).slice(0, 4)
+    const openTasks = (data.tasks || []).filter(t => t.status !== 'completed').slice(0, 4)
+
+    el.innerHTML = `
+      <div class="sheet-header" style="margin-bottom:0">
+        <div style="flex:1;padding-right:8px">
+          <div style="font-size:22px;font-weight:700;color:#1C1C1E;line-height:1.25;letter-spacing:-0.3px">${d.title}</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
+            <span class="stage-tag" style="background:${st.bg};color:${st.color}">${st.label}</span>
+            ${d.value > 0 ? `<span style="font-size:17px;font-weight:700;color:#34C759">$${fmtMoney(d.value)}</span>` : ''}
+          </div>
         </div>
-        <button class="w-full mt-2 text-xs text-slate-400 hover:text-indigo-500 py-2 border-2 border-dashed border-slate-200 rounded-lg hover:border-indigo-300 transition-colors" 
-          onclick="showAddDealInStage('${stage}')">+ Add Deal</button>
+        <button class="sheet-close" onclick="closeSheet('sh-deal')" style="flex-shrink:0;align-self:flex-start"><i class="fas fa-xmark"></i></button>
+      </div>
+
+      <div class="sheet-body">
+        ${nx.label ? `
+          <div class="next-banner" style="background:${nx.urgent?'#FFF1F0':'#EEF4FF'};border:1px solid ${nx.urgent?'#FFCCC7':'#BFDBFE'}">
+            <div style="font-size:11px;font-weight:700;color:${nx.urgent?'#FF3B30':'#007AFF'};letter-spacing:0.05em;margin-bottom:5px">${nx.urgent?'⚡ ACTION REQUIRED':'👉 NEXT STEP'}</div>
+            <div style="font-size:16px;font-weight:700;color:#1C1C1E;display:flex;align-items:center;gap:8px">
+              <i class="fas ${nx.icon}" style="color:${nx.urgent?'#FF3B30':'#007AFF'}"></i>
+              ${nx.label}
+            </div>
+          </div>` : ''}
+
+        ${d.contact_name ? `
+          <div class="section-head" style="padding:0 0 8px">Contact</div>
+          <div class="info-block" style="margin-bottom:14px">
+            <div style="padding:14px 16px">
+              <div style="font-weight:700;font-size:16px;color:#1C1C1E;margin-bottom:12px">${d.contact_name}</div>
+              <div class="contact-actions" style="grid-template-columns:repeat(${(d.contact_mobile||d.contact_phone)?((d.contact_email)?3:2):1},1fr)">
+                ${d.contact_mobile||d.contact_phone ? `
+                  <a href="tel:${d.contact_mobile||d.contact_phone}" class="contact-btn" style="background:#F0FDF4">
+                    <i class="fas fa-phone" style="color:#34C759"></i>
+                    <span style="color:#34C759">Call</span>
+                  </a>
+                  <a href="sms:${d.contact_mobile||d.contact_phone}" class="contact-btn" style="background:#EEF4FF">
+                    <i class="fas fa-comment" style="color:#007AFF"></i>
+                    <span style="color:#007AFF">Text</span>
+                  </a>` : ''}
+                ${d.contact_email ? `
+                  <a href="mailto:${d.contact_email}" class="contact-btn" style="background:#F5F3FF">
+                    <i class="fas fa-envelope" style="color:#5856D6"></i>
+                    <span style="color:#5856D6">Email</span>
+                  </a>` : ''}
+              </div>
+            </div>
+          </div>` : ''}
+
+        <div class="section-head" style="padding:0 0 8px">Move Stage</div>
+        <div class="stage-scroll" style="margin-bottom:16px">
+          <div class="stage-pills">
+            ${Object.entries(S).filter(([k]) => !['lost','on_hold','completed'].includes(k)).map(([k,s]) => `
+              <button class="s-pill${d.stage===k?' active':''}" 
+                style="${d.stage===k?`border-color:${s.hex};background:${s.bg};color:${s.color}`:''}"
+                onclick="moveStage(${d.id},'${k}')">${s.label}</button>
+            `).join('')}
+          </div>
+        </div>
+
+        <div class="section-head" style="padding:0 0 8px">Quick Actions</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+          <button onclick="commForDeal(${d.id},${d.contact_id},'email')" class="btn btn-gray" style="font-size:14px;padding:13px">
+            <i class="fas fa-envelope" style="color:#5856D6"></i> Email
+          </button>
+          <button onclick="commForDeal(${d.id},${d.contact_id},'sms')" class="btn btn-gray" style="font-size:14px;padding:13px">
+            <i class="fas fa-comment" style="color:#007AFF"></i> Text
+          </button>
+          <button onclick="genTasks(${d.id})" class="btn btn-gray" style="font-size:14px;padding:13px">
+            <i class="fas fa-wand-magic-sparkles" style="color:#5856D6"></i> Auto Tasks
+          </button>
+          <button onclick="wonDeal(${d.id})" class="btn btn-gray" style="font-size:14px;padding:13px">
+            <i class="fas fa-trophy" style="color:#FF9500"></i> Mark Won
+          </button>
+        </div>
+
+        ${openTasks.length ? `
+          <div class="section-head" style="padding:0 0 8px">Open Tasks (${openTasks.length})</div>
+          <div class="info-block" style="margin-bottom:14px">
+            ${openTasks.map(t => `
+              <div class="mini-task">
+                <div class="mini-check" onclick="completeTask(${t.id},this)" style="border-color:${PC[t.priority]||'#C7C7CC'}"></div>
+                <div style="flex:1;font-size:14px;color:#3C3C43">${t.title}</div>
+                <div style="font-size:12px;color:#8E8E93">${t.due_date ? new Date(t.due_date).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : ''}</div>
+              </div>`).join('')}
+          </div>` : ''}
+
+        ${comms.length ? `
+          <div class="section-head" style="padding:0 0 8px">Recent Communications</div>
+          <div class="info-block" style="margin-bottom:14px">
+            ${comms.map(c => `
+              <div class="info-row">
+                <div style="width:32px;height:32px;border-radius:50%;background:${c.direction==='inbound'?'#DBEAFE':'#DCFCE7'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                  <i class="fas ${c.type==='email'?'fa-envelope':c.type==='sms'?'fa-comment':c.type==='call'?'fa-phone':'fa-note-sticky'}" style="font-size:13px;color:${c.direction==='inbound'?'#2563EB':'#15803D'}"></i>
+                </div>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:14px;color:#3C3C43;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.subject||c.type}</div>
+                  <div style="font-size:12px;color:#8E8E93">${timeAgo(c.created_at)}</div>
+                </div>
+              </div>`).join('')}
+          </div>` : ''}
+
+        <button onclick="lostDeal(${d.id})" class="btn btn-red-soft" style="margin-top:4px">Mark as Lost</button>
       </div>
     `
-  }).join('')
-}
-
-function renderKanbanCard(deal) {
-  const priorityColor = PRIORITY_COLORS[deal.priority] || '#94a3b8'
-  return `
-    <div class="kanban-card" onclick="openDealDetail(${deal.id})">
-      <div class="flex items-start gap-2 mb-2">
-        <div class="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style="background:${priorityColor}"></div>
-        <div class="text-xs font-medium text-slate-700 leading-snug">${deal.title}</div>
-      </div>
-      ${deal.contact_name ? `<div class="text-xs text-slate-400 mb-1"><i class="fas fa-user text-xs mr-1"></i>${deal.contact_name}</div>` : ''}
-      ${deal.value > 0 ? `<div class="text-xs font-semibold text-green-600">$${fmtNum(deal.value)}</div>` : ''}
-    </div>
-  `
-}
-
-async function openDealDetail(dealId) {
-  const modal = document.getElementById('modal-deal-detail')
-  const content = document.getElementById('deal-detail-content')
-  
-  content.innerHTML = `<div class="text-center py-12"><i class="fas fa-spinner fa-spin text-2xl text-indigo-400"></i></div>`
-  modal.classList.add('open')
-  
-  try {
-    const { data } = await axios.get(`${API}/deals/${dealId}`)
-    renderDealDetail(data, content)
-    state.currentDeal = data.deal
-  } catch(e) {
-    content.innerHTML = `<div class="text-red-500 p-4">Error loading deal: ${e.message}</div>`
+  } catch {
+    el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading deal</p></div>`
   }
 }
 
-function renderDealDetail(data, container) {
-  const d = data.deal
-  const stageColor = STAGE_COLORS[d.stage] || '#94a3b8'
-  
-  container.innerHTML = `
-    <div class="flex items-start justify-between mb-4">
-      <div>
-        <h2 class="text-xl font-bold text-slate-800">${d.title}</h2>
-        <div class="flex items-center gap-2 mt-1">
-          <span class="stage-badge text-xs" style="background:${stageColor}20;color:${stageColor}">${STAGE_LABELS[d.stage] || d.stage}</span>
-          ${d.contact_name ? `<span class="text-slate-400 text-sm"><i class="fas fa-user mr-1"></i>${d.contact_name}</span>` : ''}
-          ${d.value > 0 ? `<span class="text-green-600 font-semibold">$${fmtNum(d.value)}</span>` : ''}
-        </div>
-      </div>
-      <button onclick="closeModal('modal-deal-detail')" class="text-slate-400 hover:text-slate-600 text-xl">&times;</button>
-    </div>
-    
-    <!-- Quick Actions -->
-    <div class="flex flex-wrap gap-2 mb-4 pb-4 border-b border-slate-100">
-      <button class="btn btn-secondary btn-xs" onclick="analyzeDeal(${d.id})"><i class="fas fa-brain"></i> AI Analyze</button>
-      <button class="btn btn-secondary btn-xs" onclick="generateTasks(${d.id})"><i class="fas fa-magic"></i> Auto Tasks</button>
-      <button class="btn btn-secondary btn-xs" onclick="openCommModal(${d.id}, ${d.contact_id})"><i class="fas fa-envelope"></i> Send Email</button>
-      <button class="btn btn-secondary btn-xs" onclick="openSMSModal(${d.id}, ${d.contact_id})"><i class="fas fa-sms"></i> Send SMS</button>
-      <button class="btn btn-secondary btn-xs" onclick="openCreateEstimateModal(${d.id})"><i class="fas fa-file-invoice"></i> Create Estimate</button>
-      <button class="btn btn-secondary btn-xs" onclick="openCreatePOModal(${d.id})"><i class="fas fa-shopping-cart"></i> Create PO</button>
-      <button class="btn btn-warning btn-xs" onclick="editDeal(${d.id})"><i class="fas fa-edit"></i> Edit</button>
-    </div>
-    
-    <!-- Stage Progression -->
-    <div class="mb-4 pb-4 border-b border-slate-100">
-      <div class="text-xs font-semibold text-slate-500 mb-2">MOVE TO STAGE</div>
-      <div class="flex flex-wrap gap-1">
-        ${Object.entries(STAGE_LABELS).filter(([k]) => !['lost','on_hold','completed'].includes(k)).map(([k,v]) => `
-          <button class="text-xs px-2 py-1 rounded-full border cursor-pointer transition-all ${d.stage === k ? 'font-bold' : 'text-slate-500 border-slate-200 hover:border-indigo-300'}"
-            style="${d.stage === k ? `background:${STAGE_COLORS[k]}20;border-color:${STAGE_COLORS[k]};color:${STAGE_COLORS[k]}` : ''}"
-            onclick="updateDealStage(${d.id}, '${k}')">${v}</button>
-        `).join('')}
-      </div>
-    </div>
-    
-    <!-- AI Summary -->
-    ${d.ai_status_summary ? `
-      <div class="mb-4 p-3 rounded-lg bg-indigo-50 border border-indigo-100">
-        <div class="text-xs font-semibold text-indigo-600 mb-1"><i class="fas fa-brain mr-1"></i>AI STATUS</div>
-        <div class="text-sm text-slate-700 mb-2">${d.ai_status_summary}</div>
-        ${d.ai_next_action ? `<div class="text-xs font-semibold text-green-600"><i class="fas fa-arrow-right mr-1"></i>NEXT ACTION: ${d.ai_next_action}</div>` : ''}
-      </div>
-    ` : ''}
-    
-    <!-- Tabs -->
-    <div class="flex gap-1 mb-4" id="deal-detail-tabs">
-      <button class="tab-btn active" onclick="showDealTab('comms', this)">Communications (${data.communications?.length || 0})</button>
-      <button class="tab-btn" onclick="showDealTab('tasks', this)">Tasks (${data.tasks?.length || 0})</button>
-      <button class="tab-btn" onclick="showDealTab('finance', this)">Finance</button>
-      <button class="tab-btn" onclick="showDealTab('orders', this)">Orders</button>
-      <button class="tab-btn" onclick="showDealTab('activity', this)">Activity</button>
-    </div>
-    
-    <div id="deal-tab-comms">
-      ${renderCommsList(data.communications)}
-    </div>
-    <div id="deal-tab-tasks" style="display:none">
-      ${renderTasksList(data.tasks)}
-    </div>
-    <div id="deal-tab-finance" style="display:none">
-      ${renderFinanceTab(data)}
-    </div>
-    <div id="deal-tab-orders" style="display:none">
-      ${renderOrdersTab(data)}
-    </div>
-    <div id="deal-tab-activity" style="display:none">
-      ${renderActivityList(data.activity)}
-    </div>
-  `
-}
-
-function showDealTab(tab, btn) {
-  document.querySelectorAll('#deal-detail-content [id^="deal-tab-"]').forEach(el => el.style.display = 'none')
-  document.querySelectorAll('#deal-detail-content .tab-btn').forEach(b => b.classList.remove('active'))
-  document.getElementById(`deal-tab-${tab}`).style.display = 'block'
-  btn.classList.add('active')
-}
-
-function renderCommsList(comms) {
-  if (!comms?.length) return '<div class="text-slate-400 text-sm text-center py-4">No communications yet</div>'
-  return `<div class="space-y-2 max-h-64 overflow-y-auto">` + comms.map(c => `
-    <div class="flex gap-3 items-start p-3 bg-slate-50 rounded-lg">
-      <div class="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style="background:${c.direction === 'inbound' ? '#dbeafe' : '#f0fdf4'}">
-        <i class="fas ${COMM_ICONS[c.type] || 'fa-comment'} text-xs" style="color:${c.direction === 'inbound' ? '#3b82f6' : '#22c55e'}"></i>
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2 mb-1">
-          <span class="text-xs font-medium text-slate-600">${c.type?.toUpperCase()} ${c.direction === 'inbound' ? '↓' : '↑'}</span>
-          <span class="text-xs text-slate-400">${timeAgo(c.created_at)}</span>
-        </div>
-        ${c.subject ? `<div class="text-sm font-medium text-slate-700">${c.subject}</div>` : ''}
-        ${c.summary || c.body ? `<div class="text-xs text-slate-500 mt-1 truncate">${c.summary || c.body?.substring(0,100)}</div>` : ''}
-      </div>
-    </div>
-  `).join('') + '</div>'
-}
-
-function renderTasksList(tasks) {
-  if (!tasks?.length) return '<div class="text-slate-400 text-sm text-center py-4">No tasks</div>'
-  return `<div class="space-y-2">` + tasks.map(t => `
-    <div class="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg">
-      <input type="checkbox" ${t.status === 'completed' ? 'checked' : ''} 
-        onchange="completeTask(${t.id})" class="w-4 h-4 accent-indigo-500">
-      <div class="flex-1">
-        <div class="text-sm ${t.status === 'completed' ? 'line-through text-slate-400' : 'text-slate-700'}">${t.title}</div>
-        <div class="text-xs text-slate-400">${t.type} · ${t.due_date ? new Date(t.due_date).toLocaleDateString() : 'No due date'}</div>
-      </div>
-      <div class="w-2 h-2 rounded-full" style="background:${PRIORITY_COLORS[t.priority]}"></div>
-    </div>
-  `).join('') + '</div>'
-}
-
-function renderFinanceTab(data) {
-  const estimates = data.estimates || []
-  const invoices = data.invoices || []
-  return `
-    <div class="space-y-4">
-      <div>
-        <div class="flex items-center justify-between mb-2">
-          <h4 class="text-sm font-semibold text-slate-600">Estimates</h4>
-          <button class="btn btn-xs btn-secondary" onclick="openCreateEstimateModal(${data.deal.id})">+ New</button>
-        </div>
-        ${estimates.length ? estimates.map(e => `
-          <div class="flex items-center gap-3 p-2 bg-slate-50 rounded-lg mb-2">
-            <div class="flex-1">
-              <div class="text-sm font-medium">${e.estimate_number}</div>
-              <div class="text-xs text-slate-400">$${fmtNum(e.total)} · ${e.status}</div>
-            </div>
-            ${e.quickbooks_url ? `<a href="${e.quickbooks_url}" target="_blank" class="btn btn-xs btn-secondary">QB</a>` : ''}
-          </div>
-        `).join('') : '<div class="text-slate-400 text-xs">No estimates yet</div>'}
-      </div>
-      <div>
-        <div class="flex items-center justify-between mb-2">
-          <h4 class="text-sm font-semibold text-slate-600">Invoices</h4>
-          <button class="btn btn-xs btn-secondary" onclick="openCreateInvoiceModal(${data.deal.id})">+ New</button>
-        </div>
-        ${invoices.length ? invoices.map(i => `
-          <div class="flex items-center gap-3 p-2 bg-slate-50 rounded-lg mb-2">
-            <div class="flex-1">
-              <div class="text-sm font-medium">${i.invoice_number}</div>
-              <div class="text-xs text-slate-400">$${fmtNum(i.total)} · ${i.status}</div>
-            </div>
-            ${i.status !== 'paid' ? `<button class="btn btn-xs btn-success" onclick="markInvoicePaid(${i.id})">Mark Paid</button>` : '<span class="text-green-600 text-xs font-semibold">✓ PAID</span>'}
-            ${i.quickbooks_url ? `<a href="${i.quickbooks_url}" target="_blank" class="btn btn-xs btn-secondary">QB</a>` : ''}
-          </div>
-        `).join('') : '<div class="text-slate-400 text-xs">No invoices yet</div>'}
-      </div>
-    </div>
-  `
-}
-
-function renderOrdersTab(data) {
-  const pos = data.purchase_orders || []
-  const shipments = data.shipments || []
-  return `
-    <div class="space-y-4">
-      <div>
-        <div class="flex items-center justify-between mb-2">
-          <h4 class="text-sm font-semibold text-slate-600">Purchase Orders</h4>
-          <button class="btn btn-xs btn-secondary" onclick="openCreatePOModal(${data.deal.id})">+ New PO</button>
-        </div>
-        ${pos.length ? pos.map(po => `
-          <div class="flex items-center gap-3 p-2 bg-slate-50 rounded-lg mb-2">
-            <div class="flex-1">
-              <div class="text-sm font-medium">${po.po_number}</div>
-              <div class="text-xs text-slate-400">${po.supplier_name} · $${fmtNum(po.total)}</div>
-            </div>
-            <span class="text-xs px-2 py-0.5 rounded-full" style="background:${PO_STATUS_COLORS[po.status] || '#94a3b8'}20;color:${PO_STATUS_COLORS[po.status] || '#94a3b8'}">${po.status?.replace(/_/g,' ')}</span>
-            ${po.status === 'confirmed' ? `<button class="btn btn-xs btn-primary" onclick="showAddTracking(${po.id})">Add Tracking</button>` : ''}
-            ${po.status === 'draft' || po.status === 'approved' ? `<button class="btn btn-xs btn-secondary" onclick="requestQuote(${po.id})">Request Quote</button>` : ''}
-          </div>
-        `).join('') : '<div class="text-slate-400 text-xs">No orders yet</div>'}
-      </div>
-      ${shipments.length ? `
-        <div>
-          <h4 class="text-sm font-semibold text-slate-600 mb-2">Shipments</h4>
-          ${shipments.map(s => `
-            <div class="p-2 bg-slate-50 rounded-lg mb-2">
-              <div class="flex items-center justify-between">
-                <div class="text-sm font-medium">${s.carrier} · ${s.tracking_number}</div>
-                <a href="${s.tracking_url}" target="_blank" class="btn btn-xs btn-secondary">Track</a>
-              </div>
-              <div class="text-xs text-slate-400">${s.status} ${s.estimated_delivery ? '· ETA: ' + s.estimated_delivery : ''}</div>
-            </div>
-          `).join('')}
-        </div>
-      ` : ''}
-    </div>
-  `
-}
-
-function renderActivityList(activities) {
-  if (!activities?.length) return '<div class="text-slate-400 text-sm text-center py-4">No activity</div>'
-  return `<div class="space-y-2 max-h-64 overflow-y-auto">` + activities.map(a => `
-    <div class="flex gap-3 items-start py-2 border-b border-slate-50">
-      <div class="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
-        <i class="fas ${getActionIcon(a.action)} text-slate-400 text-xs"></i>
-      </div>
-      <div>
-        <div class="text-sm text-slate-700">${a.description}</div>
-        <div class="text-xs text-slate-400">${timeAgo(a.created_at)} · ${a.performed_by}</div>
-      </div>
-    </div>
-  `).join('') + '</div>'
-}
-
-// ============================================================
-// CONTACTS
-// ============================================================
-async function loadContacts(search = '', type = '') {
-  try {
-    const { data } = await axios.get(`${API}/contacts`, { params: { search, type, limit: 100 } })
-    state.contacts = data.contacts
-    renderContactsTable(data.contacts)
-  } catch(e) { console.error(e) }
-}
-
-function renderContactsTable(contacts) {
-  const el = document.getElementById('contacts-list')
-  if (!contacts?.length) {
-    el.innerHTML = `<div class="card text-center py-12 text-slate-400"><i class="fas fa-users text-4xl mb-3"></i><br>No contacts yet. <button class="btn btn-primary btn-sm mt-2" onclick="showAddContact()">Add First Contact</button></div>`
-    return
-  }
-  
-  el.innerHTML = `
-    <div class="card overflow-hidden p-0">
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="bg-slate-50 border-b border-slate-100">
-            <th class="text-left p-3 text-slate-600 font-semibold">Name</th>
-            <th class="text-left p-3 text-slate-600 font-semibold">Company</th>
-            <th class="text-left p-3 text-slate-600 font-semibold">Contact</th>
-            <th class="text-left p-3 text-slate-600 font-semibold">Type</th>
-            <th class="text-left p-3 text-slate-600 font-semibold">Location</th>
-            <th class="text-left p-3 text-slate-600 font-semibold">Last Contact</th>
-            <th class="p-3"></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${contacts.map(c => `
-            <tr class="border-b border-slate-50 hover:bg-slate-50 cursor-pointer" onclick="openContactDetail(${c.id})">
-              <td class="p-3">
-                <div class="flex items-center gap-2">
-                  <div class="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-semibold text-xs">
-                    ${c.first_name?.[0]}${c.last_name?.[0]}
-                  </div>
-                  <div>
-                    <div class="font-medium text-slate-800">${c.first_name} ${c.last_name}</div>
-                    ${c.title ? `<div class="text-xs text-slate-400">${c.title}</div>` : ''}
-                  </div>
-                </div>
-              </td>
-              <td class="p-3 text-slate-600">${c.company_name || '—'}</td>
-              <td class="p-3">
-                ${c.email ? `<div class="text-slate-600 truncate max-w-32">${c.email}</div>` : ''}
-                ${c.phone ? `<div class="text-slate-400 text-xs">${c.phone}</div>` : ''}
-              </td>
-              <td class="p-3">
-                <span class="stage-badge text-xs" style="background:${getTypeColor(c.type)}20;color:${getTypeColor(c.type)}">${c.type || 'lead'}</span>
-              </td>
-              <td class="p-3 text-slate-500 text-xs">${[c.city, c.state].filter(Boolean).join(', ') || '—'}</td>
-              <td class="p-3 text-slate-400 text-xs">${c.last_contacted_at ? timeAgo(c.last_contacted_at) : 'Never'}</td>
-              <td class="p-3">
-                <div class="flex gap-1">
-                  <button class="btn btn-xs btn-secondary" onclick="event.stopPropagation();editContact(${c.id})"><i class="fas fa-edit"></i></button>
-                  <button class="btn btn-xs btn-secondary" onclick="event.stopPropagation();quickEmail(${c.id}, '${c.email}', '${c.first_name}')"><i class="fas fa-envelope"></i></button>
-                  <button class="btn btn-xs btn-secondary" onclick="event.stopPropagation();quickSMS(${c.id}, '${c.mobile || c.phone}')"><i class="fas fa-sms"></i></button>
-                </div>
-              </td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-  `
-}
-
-function filterContacts(search) {
-  loadContacts(search, document.querySelector('.select')?.value || '')
-}
-function filterContactsByType(type) {
-  loadContacts(document.getElementById('contact-search')?.value || '', type)
-}
-
-async function openContactDetail(id) {
+// ── CONTACT DETAIL ───────────────────────────────────
+async function openContact(id) {
+  openSheet('sh-contact')
+  const el = document.getElementById('sh-contact-body')
+  el.innerHTML = `<div class="loading" style="padding:60px"><i class="fas fa-spinner fa-spin"></i></div>`
   try {
     const { data } = await axios.get(`${API}/contacts/${id}`)
     const c = data.contact
-    
-    const modal = document.createElement('div')
-    modal.className = 'modal open'
-    modal.id = `modal-contact-detail-${id}`
-    modal.innerHTML = `
-      <div class="modal-box" style="max-width:850px;width:95vw">
-        <div class="flex items-start justify-between mb-4">
-          <div class="flex items-center gap-3">
-            <div class="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-content-center text-indigo-600 font-bold text-lg" style="display:flex;align-items:center;justify-content:center">
-              ${c.first_name?.[0]}${c.last_name?.[0]}
+    const deals = data.deals || []
+    const comms = (data.communications || []).slice(0, 4)
+    const init = `${c.first_name?.[0]||''}${c.last_name?.[0]||''}`
+    const typeC = { lead:'#8E8E93', prospect:'#007AFF', customer:'#34C759' }
+    const tc = typeC[c.type] || '#8E8E93'
+    const tcBg = { lead:'#F2F2F7', prospect:'#EEF4FF', customer:'#F0FDF4' }[c.type] || '#F2F2F7'
+
+    el.innerHTML = `
+      <div class="sheet-header">
+        <div style="display:flex;align-items:center;gap:14px;flex:1">
+          <div style="width:52px;height:52px;border-radius:50%;background:#EEF4FF;color:#007AFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;flex-shrink:0">${init}</div>
+          <div>
+            <div style="font-size:20px;font-weight:700;color:#1C1C1E;letter-spacing:-0.3px">${c.first_name} ${c.last_name}</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:3px">
+              <span style="background:${tcBg};color:${tc};font-size:11px;font-weight:700;padding:3px 9px;border-radius:7px;letter-spacing:0.04em">${(c.type||'lead').toUpperCase()}</span>
+              ${c.company_name ? `<span style="font-size:13px;color:#8E8E93">${c.company_name}</span>` : ''}
             </div>
-            <div>
-              <h2 class="text-xl font-bold">${c.first_name} ${c.last_name}</h2>
-              <div class="text-slate-400 text-sm">${c.title || ''} ${c.company_name ? '· ' + c.company_name : ''}</div>
-            </div>
-          </div>
-          <button onclick="this.closest('.modal').remove()" class="text-slate-400 text-xl">&times;</button>
-        </div>
-        <div class="grid-2 gap-4 mb-4">
-          <div class="space-y-2">
-            ${c.email ? `<div class="flex gap-2 items-center"><i class="fas fa-envelope text-slate-400 w-4"></i> <a href="mailto:${c.email}" class="text-indigo-600 hover:underline text-sm">${c.email}</a></div>` : ''}
-            ${c.phone ? `<div class="flex gap-2 items-center"><i class="fas fa-phone text-slate-400 w-4"></i> <span class="text-sm">${c.phone}</span></div>` : ''}
-            ${c.mobile ? `<div class="flex gap-2 items-center"><i class="fas fa-mobile-alt text-slate-400 w-4"></i> <span class="text-sm">${c.mobile}</span></div>` : ''}
-            ${[c.city, c.state].filter(Boolean).length ? `<div class="flex gap-2 items-center"><i class="fas fa-map-marker-alt text-slate-400 w-4"></i> <span class="text-sm">${[c.city, c.state].filter(Boolean).join(', ')}</span></div>` : ''}
-          </div>
-          <div class="space-y-2">
-            <div class="flex gap-2 flex-wrap">
-              <button class="btn btn-primary btn-xs" onclick="quickEmail(${c.id}, '${c.email}', '${c.first_name}')"><i class="fas fa-envelope"></i> Email</button>
-              <button class="btn btn-secondary btn-xs" onclick="quickSMS(${c.id}, '${c.mobile || c.phone}')"><i class="fas fa-sms"></i> SMS</button>
-              <button class="btn btn-secondary btn-xs" onclick="showAddDealForContact(${c.id}, '${c.first_name} ${c.last_name}')"><i class="fas fa-plus"></i> New Deal</button>
-              <button class="btn btn-secondary btn-xs" onclick="editContact(${c.id})"><i class="fas fa-edit"></i> Edit</button>
-            </div>
-            ${c.ai_summary ? `<div class="text-xs text-slate-500 bg-indigo-50 p-2 rounded">${c.ai_summary}</div>` : ''}
           </div>
         </div>
-        <div class="grid-2 gap-4">
-          <div>
-            <h4 class="text-sm font-semibold text-slate-600 mb-2">Deals (${data.deals?.length || 0})</h4>
-            ${(data.deals || []).map(d => `
-              <div class="p-2 bg-slate-50 rounded mb-1 cursor-pointer hover:bg-slate-100" onclick="openDealDetail(${d.id})">
-                <div class="text-sm font-medium">${d.title}</div>
-                <div class="text-xs text-slate-400">${STAGE_LABELS[d.stage] || d.stage} ${d.value ? '· $' + fmtNum(d.value) : ''}</div>
-              </div>
-            `).join('') || '<div class="text-slate-400 text-xs">No deals</div>'}
-          </div>
-          <div>
-            <h4 class="text-sm font-semibold text-slate-600 mb-2">Recent Communications</h4>
-            ${(data.communications || []).slice(0, 5).map(c => `
-              <div class="p-2 bg-slate-50 rounded mb-1">
-                <div class="flex items-center gap-2">
-                  <i class="fas ${COMM_ICONS[c.type] || 'fa-comment'} text-xs text-slate-400"></i>
-                  <span class="text-xs font-medium">${c.subject || c.type}</span>
-                  <span class="text-xs text-slate-400 ml-auto">${timeAgo(c.created_at)}</span>
+        <button class="sheet-close" onclick="closeSheet('sh-contact')" style="flex-shrink:0;align-self:flex-start"><i class="fas fa-xmark"></i></button>
+      </div>
+      <div class="sheet-body">
+        <div class="contact-actions" style="margin-bottom:20px">
+          ${c.mobile||c.phone ? `
+            <a href="tel:${c.mobile||c.phone}" class="contact-btn" style="background:#F0FDF4">
+              <i class="fas fa-phone" style="color:#34C759"></i>
+              <span style="color:#34C759">Call</span>
+            </a>
+            <a href="sms:${c.mobile||c.phone}" class="contact-btn" style="background:#EEF4FF">
+              <i class="fas fa-comment" style="color:#007AFF"></i>
+              <span style="color:#007AFF">Text</span>
+            </a>
+          ` : '<div></div><div></div>'}
+          ${c.email ? `
+            <a href="mailto:${c.email}" class="contact-btn" style="background:#F5F3FF">
+              <i class="fas fa-envelope" style="color:#5856D6"></i>
+              <span style="color:#5856D6">Email</span>
+            </a>
+          ` : '<div></div>'}
+        </div>
+
+        <div class="info-block" style="margin-bottom:16px">
+          ${c.email ? `<div class="info-row"><i class="fas fa-envelope"></i><span>${c.email}</span></div>` : ''}
+          ${c.mobile||c.phone ? `<div class="info-row"><i class="fas fa-phone"></i><span>${c.mobile||c.phone}</span></div>` : ''}
+          ${c.city||c.state ? `<div class="info-row"><i class="fas fa-location-dot"></i><span>${[c.city,c.state].filter(Boolean).join(', ')}</span></div>` : ''}
+        </div>
+
+        ${deals.length ? `
+          <div class="section-head" style="padding:0 0 8px">Deals (${deals.length})</div>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+            ${deals.map(d => {
+              const s = S[d.stage] || S.lead
+              return `
+                <div onclick="closeSheet('sh-contact');openDeal(${d.id})" style="display:flex;align-items:center;justify-content:space-between;padding:13px 16px;background:#fff;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,0.06);cursor:pointer">
+                  <div>
+                    <div style="font-weight:600;font-size:15px;color:#1C1C1E">${d.title}</div>
+                    <span class="stage-tag" style="background:${s.bg};color:${s.color};margin-top:5px;display:inline-flex;font-size:11px">${s.label}</span>
+                  </div>
+                  ${d.value > 0 ? `<div style="font-weight:700;color:#34C759;font-size:15px">$${fmtMoney(d.value)}</div>` : ''}
                 </div>
-              </div>
-            `).join('') || '<div class="text-slate-400 text-xs">No communications</div>'}
-          </div>
+              `
+            }).join('')}
+          </div>` : ''}
+
+        ${comms.length ? `
+          <div class="section-head" style="padding:0 0 8px">Recent Communications</div>
+          <div class="info-block" style="margin-bottom:16px">
+            ${comms.map(c => `
+              <div class="info-row">
+                <i class="fas ${c.type==='email'?'fa-envelope':c.type==='sms'?'fa-comment':c.type==='call'?'fa-phone':'fa-note-sticky'}" style="color:${c.direction==='inbound'?'#007AFF':'#34C759'}"></i>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:14px;color:#3C3C43;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.subject||c.type}</div>
+                  <div style="font-size:12px;color:#8E8E93">${timeAgo(c.created_at)}</div>
+                </div>
+              </div>`).join('')}
+          </div>` : ''}
+
+        ${c.notes ? `<div style="background:#FFFBEC;border-radius:14px;padding:14px;font-size:14px;color:#3C3C43;margin-bottom:16px;border:1px solid #FEF3C7">${c.notes}</div>` : ''}
+
+        <button onclick="openAddDeal(${c.id});closeSheet('sh-contact')" class="btn btn-primary">
+          <i class="fas fa-handshake"></i> New Deal for ${c.first_name}
+        </button>
+      </div>
+    `
+  } catch {
+    el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading contact</p></div>`
+  }
+}
+
+// ── TASK PANEL ───────────────────────────────────────
+function openTaskPanel(raw) {
+  let task
+  try { task = JSON.parse(decodeURIComponent(raw)) } catch { try { task = JSON.parse(raw) } catch { return } }
+  openSheet('sh-panel')
+  const el = document.getElementById('sh-panel-body')
+  const pc = PC[task.priority] || '#8E8E93'
+  const pcBg = PBG[task.priority] || '#F2F2F7'
+  const isOv = task.due_date && new Date(task.due_date) < new Date() && task.status !== 'completed'
+  const enc = encodeURIComponent(JSON.stringify(task))
+
+  el.innerHTML = `
+    <div class="sheet-header">
+      <div style="flex:1;padding-right:8px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;color:${isOv?'#FF3B30':pc};margin-bottom:6px">${isOv?'⚠️ OVERDUE':(task.priority||'medium').toUpperCase()+' PRIORITY'}</div>
+        <div style="font-size:20px;font-weight:700;color:#1C1C1E;line-height:1.3">${task.title}</div>
+        <div style="font-size:13px;color:#8E8E93;margin-top:6px;display:flex;flex-wrap:wrap;gap:10px">
+          ${task.deal_title ? `<span><i class="fas fa-handshake" style="margin-right:4px"></i>${task.deal_title}</span>` : ''}
+          ${task.due_date ? `<span><i class="fas fa-calendar" style="margin-right:4px"></i>${new Date(task.due_date).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</span>` : ''}
+        </div>
+      </div>
+      <button class="sheet-close" onclick="closeSheet('sh-panel')" style="flex-shrink:0;align-self:flex-start"><i class="fas fa-xmark"></i></button>
+    </div>
+    <div class="sheet-body" style="padding-bottom:24px">
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button onclick="completeTask(${task.id},null);closeSheet('sh-panel');if(state.page==='tasks')loadTasks();if(state.page==='home')loadHome()" class="btn btn-green">
+          <i class="fas fa-circle-check"></i> Mark Complete
+        </button>
+        <button onclick="snoozeTask(${task.id},1);closeSheet('sh-panel')" class="btn btn-orange">
+          <i class="fas fa-clock"></i> Snooze 1 Day
+        </button>
+        <button onclick="snoozeTask(${task.id},3);closeSheet('sh-panel')" class="btn btn-gray">
+          <i class="fas fa-clock"></i> Snooze 3 Days
+        </button>
+        <button onclick="closeSheet('sh-panel');editTask('${enc}')" class="btn btn-gray">
+          <i class="fas fa-pen"></i> Edit Task
+        </button>
+        <button onclick="delTask(${task.id});closeSheet('sh-panel')" class="btn btn-red-soft">
+          <i class="fas fa-trash"></i> Delete Task
+        </button>
+      </div>
+    </div>
+  `
+}
+
+// ── PO DETAIL ────────────────────────────────────────
+async function openPO(id) {
+  openSheet('sh-panel')
+  const el = document.getElementById('sh-panel-body')
+  el.innerHTML = `<div class="loading" style="padding:60px"><i class="fas fa-spinner fa-spin"></i></div>`
+  try {
+    const { data } = await axios.get(`${API}/purchase-orders/${id}`)
+    const po = data.purchase_order
+    const POC = { draft:'#8E8E93',quote_requested:'#FF9500',quote_received:'#007AFF',approved:'#5856D6',submitted:'#32ADE6',confirmed:'#34C759',shipped:'#5856D6',received:'#34C759',cancelled:'#FF3B30' }
+    const color = POC[po.status] || '#8E8E93'
+    const lineItems = safeJson(po.line_items, [])
+    const tracking = safeJson(po.tracking_numbers, [])
+
+    el.innerHTML = `
+      <div class="sheet-header">
+        <div>
+          <div style="font-size:22px;font-weight:700;color:#1C1C1E;letter-spacing:-0.3px">${po.po_number}</div>
+          <span style="font-size:11px;font-weight:700;color:${color};background:${color}20;padding:3px 10px;border-radius:7px;letter-spacing:0.04em;display:inline-block;margin-top:4px">${(po.status||'').replace(/_/g,' ').toUpperCase()}</span>
+        </div>
+        <button class="sheet-close" onclick="closeSheet('sh-panel')" style="flex-shrink:0;align-self:flex-start"><i class="fas fa-xmark"></i></button>
+      </div>
+      <div class="sheet-body" style="padding-bottom:24px">
+        <div class="info-block" style="margin-bottom:14px">
+          <div class="info-row"><i class="fas fa-building"></i><span style="font-weight:600">${po.supplier_name||'—'}</span></div>
+          ${po.deal_title ? `<div class="info-row"><i class="fas fa-handshake"></i><span>${po.deal_title}</span></div>` : ''}
+          <div class="info-row"><i class="fas fa-dollar-sign"></i><span style="font-weight:700;color:#34C759;font-size:17px">$${fmtMoney(po.total)}</span></div>
+          ${po.expected_delivery ? `<div class="info-row"><i class="fas fa-calendar-check"></i><span>ETA: ${po.expected_delivery}</span></div>` : ''}
+        </div>
+
+        ${lineItems.length ? `
+          <div class="section-head" style="padding:0 0 8px">Line Items</div>
+          <div class="info-block" style="margin-bottom:14px">
+            ${lineItems.map(i => `
+              <div class="info-row">
+                <i class="fas fa-box" style="color:#8E8E93"></i>
+                <div style="flex:1">
+                  <span style="font-size:14px;color:#3C3C43">${i.description||i.name} ×${i.quantity||1}</span>
+                </div>
+                <span style="font-size:14px;font-weight:600;color:#1C1C1E">$${fmtMoney((i.quantity||1)*(i.unit_price||0))}</span>
+              </div>`).join('')}
+          </div>` : ''}
+
+        ${tracking.length ? `
+          <div style="background:#EEF4FF;border-radius:14px;padding:14px;margin-bottom:14px">
+            <div style="font-size:11px;font-weight:700;color:#007AFF;margin-bottom:6px;letter-spacing:0.05em">TRACKING</div>
+            ${tracking.map(t => `<div style="font-family:monospace;font-size:14px;color:#007AFF">${t}</div>`).join('')}
+          </div>` : ''}
+
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${po.status==='draft'||po.status==='approved' ? `<button onclick="requestQuote(${po.id});closeSheet('sh-panel')" class="btn btn-purple"><i class="fas fa-paper-plane"></i> Request Quote from Supplier</button>` : ''}
+          ${po.status==='confirmed' ? `<button onclick="closeSheet('sh-panel');addTracking(${po.id})" class="btn btn-primary"><i class="fas fa-truck"></i> Add Tracking Number</button>` : ''}
+          <button onclick="promptPOStatus(${po.id})" class="btn btn-gray"><i class="fas fa-arrows-rotate"></i> Update Status</button>
         </div>
       </div>
     `
-    document.body.appendChild(modal)
-    modal.addEventListener('click', e => { if (e.target === modal) modal.remove() })
-  } catch(e) { showToast('Error loading contact', 'error') }
-}
-
-// ============================================================
-// COMPANIES
-// ============================================================
-async function loadCompanies() {
-  try {
-    const { data } = await axios.get(`${API}/companies`)
-    renderCompaniesList(data.companies)
-  } catch(e) { console.error(e) }
-}
-
-function renderCompaniesList(companies) {
-  const el = document.getElementById('companies-list')
-  if (!companies?.length) {
-    el.innerHTML = `<div class="card text-center py-12 text-slate-400"><i class="fas fa-building text-4xl mb-3"></i><br>No companies yet.</div>`
-    return
+  } catch {
+    el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading order</p></div>`
   }
-  el.innerHTML = `
-    <div class="card overflow-hidden p-0">
-      <table class="w-full text-sm">
-        <thead><tr class="bg-slate-50 border-b">
-          <th class="text-left p-3 text-slate-600 font-semibold">Company</th>
-          <th class="text-left p-3 text-slate-600 font-semibold">Type</th>
-          <th class="text-left p-3 text-slate-600 font-semibold">Contact</th>
-          <th class="text-left p-3 text-slate-600 font-semibold">Location</th>
-          <th class="p-3"></th>
-        </tr></thead>
-        <tbody>${companies.map(c => `
-          <tr class="border-b border-slate-50 hover:bg-slate-50">
-            <td class="p-3">
-              <div class="font-medium text-slate-800">${c.name}</div>
-              ${c.website ? `<div class="text-xs text-indigo-400"><a href="${c.website}" target="_blank">${c.website.replace('https://','')}</a></div>` : ''}
-            </td>
-            <td class="p-3"><span class="stage-badge text-xs" style="background:${getTypeColor(c.type)}20;color:${getTypeColor(c.type)}">${c.type}</span></td>
-            <td class="p-3 text-slate-500 text-xs">${c.email || c.phone || '—'}</td>
-            <td class="p-3 text-slate-400 text-xs">${[c.city, c.state].filter(Boolean).join(', ') || '—'}</td>
-            <td class="p-3"><button class="btn btn-xs btn-secondary" onclick="editCompany(${c.id})"><i class="fas fa-edit"></i></button></td>
-          </tr>
-        `).join('')}</tbody>
-      </table>
-    </div>
-  `
 }
 
-// ============================================================
-// TASKS
-// ============================================================
-async function loadTasks(status = 'pending') {
+// ── STAGE MOVE ───────────────────────────────────────
+async function moveStage(dealId, stage) {
   try {
-    const { data } = await axios.get(`${API}/tasks`, { params: { status, limit: 100 } })
-    renderTasksPage(data.tasks)
-  } catch(e) { console.error(e) }
+    await axios.patch(`${API}/deals/${dealId}/stage`, { stage })
+    toast(`Moved to: ${S[stage]?.label}`, 'success')
+    openDeal(dealId)
+    if (state.page === 'home') loadHome()
+    if (state.page === 'deals') loadDeals()
+  } catch { toast('Error updating stage', 'error') }
 }
 
-function renderTasksPage(tasks) {
-  const el = document.getElementById('tasks-list')
-  if (!tasks?.length) {
-    el.innerHTML = `<div class="card text-center py-12 text-slate-400"><i class="fas fa-check-circle text-4xl mb-3"></i><br>No tasks in this status</div>`
-    return
+async function wonDeal(id) {
+  try {
+    await axios.put(`${API}/deals/${id}`, { status:'won', stage:'completed', actual_close_date: new Date().toISOString().split('T')[0] })
+    toast('🎉 Deal marked Won!', 'success')
+    closeSheet('sh-deal')
+    if (state.page === 'home') loadHome()
+    if (state.page === 'deals') loadDeals()
+  } catch { toast('Error', 'error') }
+}
+
+async function lostDeal(id) {
+  if (!confirm('Mark this deal as Lost?')) return
+  try {
+    await axios.put(`${API}/deals/${id}`, { status:'lost', stage:'lost' })
+    toast('Deal marked as lost', 'success')
+    closeSheet('sh-deal')
+    if (state.page === 'home') loadHome()
+    if (state.page === 'deals') loadDeals()
+  } catch { toast('Error', 'error') }
+}
+
+// ── FORMS ────────────────────────────────────────────
+async function openAddDeal(prefillContactId) {
+  await fillSel('sel-deal-contact', `${API}/contacts?limit=100`, 'contacts', c => ({ value:c.id, label:`${c.first_name} ${c.last_name}` }))
+  document.getElementById('form-deal').reset()
+  if (prefillContactId) document.getElementById('sel-deal-contact').value = prefillContactId
+  openSheet('sh-new-deal')
+}
+
+async function openAddContact() {
+  document.getElementById('form-contact').reset()
+  openSheet('sh-new-contact')
+}
+
+async function openAddTask(prefill) {
+  await fillSel('sel-task-deal', `${API}/deals?status=active&limit=100`, 'deals', d => ({ value:d.id, label:d.title }))
+  const f = document.getElementById('form-task')
+  f.reset()
+  document.getElementById('task-edit-id').value = ''
+  if (prefill) {
+    f.querySelector('[name=title]').value = prefill.title || ''
+    f.querySelector('[name=priority]').value = prefill.priority || 'medium'
+    f.querySelector('[name=type]').value = prefill.type || 'follow_up'
+    if (prefill.due_date) f.querySelector('[name=due_date]').value = prefill.due_date?.split('T')[0] || ''
+    if (prefill.deal_id) f.querySelector('[name=deal_id]').value = prefill.deal_id
+    document.getElementById('task-edit-id').value = prefill.id || ''
+  } else {
+    const t = new Date(); t.setDate(t.getDate() + 1)
+    f.querySelector('[name=due_date]').value = t.toISOString().split('T')[0]
   }
-  el.innerHTML = `
-    <div class="card overflow-hidden p-0">
-      <table class="w-full text-sm">
-        <thead><tr class="bg-slate-50 border-b">
-          <th class="p-3 w-8"></th>
-          <th class="text-left p-3 text-slate-600 font-semibold">Task</th>
-          <th class="text-left p-3 text-slate-600 font-semibold">Type</th>
-          <th class="text-left p-3 text-slate-600 font-semibold">Related To</th>
-          <th class="text-left p-3 text-slate-600 font-semibold">Due</th>
-          <th class="text-left p-3 text-slate-600 font-semibold">Priority</th>
-          <th class="p-3"></th>
-        </tr></thead>
-        <tbody>${tasks.map(t => {
-          const isOverdue = t.due_date && new Date(t.due_date) < new Date() && t.status !== 'completed'
-          return `
-          <tr class="border-b border-slate-50 hover:bg-slate-50 ${isOverdue ? 'bg-red-50' : ''}">
-            <td class="p-3"><input type="checkbox" ${t.status === 'completed' ? 'checked' : ''} onchange="completeTask(${t.id})" class="accent-indigo-500"></td>
-            <td class="p-3">
-              <div class="font-medium ${t.status === 'completed' ? 'line-through text-slate-400' : 'text-slate-800'}">${t.title}</div>
-              ${t.description ? `<div class="text-xs text-slate-400">${t.description}</div>` : ''}
-              ${t.ai_generated ? '<span class="text-xs text-indigo-400"><i class="fas fa-brain"></i> AI</span>' : ''}
-            </td>
-            <td class="p-3"><span class="text-xs text-slate-500">${t.type?.replace(/_/g,' ') || ''}</span></td>
-            <td class="p-3 text-xs text-slate-500">${t.deal_title || t.contact_name || '—'}</td>
-            <td class="p-3 text-xs ${isOverdue ? 'text-red-500 font-semibold' : 'text-slate-500'}">${t.due_date ? new Date(t.due_date).toLocaleDateString() : '—'}</td>
-            <td class="p-3"><div class="w-2 h-2 rounded-full" style="background:${PRIORITY_COLORS[t.priority]}"></div></td>
-            <td class="p-3">
-              <div class="flex gap-1">
-                <button class="btn btn-xs btn-success" onclick="completeTask(${t.id})">Done</button>
-                <button class="btn btn-xs btn-secondary" onclick="snoozeTask(${t.id}, 1)">+1d</button>
-                <button class="btn btn-xs btn-secondary" onclick="deleteTask(${t.id})"><i class="fas fa-trash"></i></button>
-              </div>
-            </td>
-          </tr>`
-        }).join('')}</tbody>
-      </table>
-    </div>
-  `
+  openSheet('sh-new-task')
 }
 
-function filterTasks(status, btn) {
-  document.querySelectorAll('#page-tasks .tab-btn').forEach(b => b.classList.remove('active'))
-  btn.classList.add('active')
-  loadTasks(status)
+function editTask(raw) {
+  let task
+  try { task = JSON.parse(decodeURIComponent(raw)) } catch { try { task = JSON.parse(raw) } catch { return } }
+  openAddTask(task)
 }
 
-async function completeTask(id) {
+async function openLogComm(prefillDealId, prefillContactId, defaultTab) {
+  await fillSel('sel-comm-contact', `${API}/contacts?limit=100`, 'contacts', c => ({ value:c.id, label:`${c.first_name} ${c.last_name}` }))
+  await fillSel('sel-comm-deal', `${API}/deals?status=active&limit=100`, 'deals', d => ({ value:d.id, label:d.title }))
+  document.getElementById('form-comm').reset()
+  if (prefillDealId) document.getElementById('sel-comm-deal').value = prefillDealId
+  if (prefillContactId) document.getElementById('sel-comm-contact').value = prefillContactId
+  setCtab(defaultTab || 'email')
+  openSheet('sh-log-comm')
+}
+
+function commForDeal(dealId, contactId, tab) {
+  closeSheet('sh-deal')
+  setTimeout(() => openLogComm(dealId, contactId, tab), 350)
+}
+
+// ── SUBMIT HANDLERS ──────────────────────────────────
+async function submitDeal(e) {
+  e.preventDefault()
+  const d = Object.fromEntries(new FormData(e.target))
+  try {
+    const { data } = await axios.post(`${API}/deals`, d)
+    try { await axios.post(`${API}/tasks/generate`, { deal_id: data.deal.id }) } catch {}
+    toast('Deal created!', 'success')
+    closeSheet('sh-new-deal')
+    if (state.page === 'home') loadHome()
+    if (state.page === 'deals') loadDeals()
+  } catch { toast('Error creating deal', 'error') }
+}
+
+async function submitContact(e) {
+  e.preventDefault()
+  const d = Object.fromEntries(new FormData(e.target))
+  try {
+    await axios.post(`${API}/contacts`, d)
+    toast('Contact added!', 'success')
+    closeSheet('sh-new-contact')
+    if (state.page === 'contacts') loadContacts()
+  } catch { toast('Error adding contact', 'error') }
+}
+
+async function submitTask(e) {
+  e.preventDefault()
+  const d = Object.fromEntries(new FormData(e.target))
+  const id = d._id; delete d._id
+  try {
+    if (id) { await axios.put(`${API}/tasks/${id}`, d); toast('Task updated!', 'success') }
+    else { await axios.post(`${API}/tasks`, d); toast('Task added!', 'success') }
+    closeSheet('sh-new-task')
+    if (state.page === 'tasks') loadTasks()
+    if (state.page === 'home') loadHome()
+  } catch { toast('Error saving task', 'error') }
+}
+
+async function submitComm(e) {
+  e.preventDefault()
+  const d = Object.fromEntries(new FormData(e.target))
+  const type = d._ctype
+  try {
+    if (type === 'email') {
+      const c = await getContact(d.contact_id)
+      const r = await axios.post(`${API}/communications/send-email`, { deal_id:d.deal_id||null, contact_id:d.contact_id||null, to:c?.email||'', subject:d.subject, html:d.body, body:d.body })
+      toast(r.data.message || 'Email logged', r.data.success ? 'success' : 'warning')
+    } else if (type === 'sms') {
+      const c = await getContact(d.contact_id)
+      const r = await axios.post(`${API}/communications/send-sms`, { deal_id:d.deal_id||null, contact_id:d.contact_id||null, to:c?.mobile||c?.phone||'', message:d.sms_body })
+      toast(r.data.message || 'SMS logged', r.data.success ? 'success' : 'warning')
+    } else if (type === 'call') {
+      await axios.post(`${API}/communications/log-call`, { deal_id:d.deal_id||null, contact_id:d.contact_id||null, direction:'outbound', duration_seconds:(parseInt(d.duration||0)*60), notes:d.call_notes })
+      toast('Call logged!', 'success')
+    } else {
+      await axios.post(`${API}/communications`, { deal_id:d.deal_id||null, contact_id:d.contact_id||null, type:'note', direction:'internal', body:d.note_body, status:'completed' })
+      toast('Note saved!', 'success')
+    }
+    closeSheet('sh-log-comm')
+  } catch(err) { toast('Error: ' + err.message, 'error') }
+}
+
+async function getContact(id) {
+  if (!id) return null
+  try { const { data } = await axios.get(`${API}/contacts/${id}`); return data.contact } catch { return null }
+}
+
+// ── COMM TABS ────────────────────────────────────────
+function setCtab(tab) {
+  ['email','sms','call','note'].forEach(t => {
+    document.getElementById('ctab-'+t)?.classList.toggle('active', t === tab)
+    const f = document.getElementById('cf-'+t)
+    if (f) f.style.display = t === tab ? 'block' : 'none'
+  })
+  document.getElementById('ctype-val').value = tab
+  const labels = { email:'Send Email', sms:'Send Text', call:'Log Call', note:'Save Note' }
+  const icons  = { email:'fa-envelope', sms:'fa-comment', call:'fa-phone', note:'fa-note-sticky' }
+  const btn = document.getElementById('comm-btn')
+  if (btn) btn.innerHTML = `<i class="fas ${icons[tab]}"></i> ${labels[tab]||'Submit'}`
+  state.ctab = tab
+}
+
+// ── TASK ACTIONS ─────────────────────────────────────
+async function completeTask(id, el) {
   try {
     await axios.patch(`${API}/tasks/${id}/complete`)
-    showToast('Task completed!', 'success')
-    if (state.currentPage === 'tasks') loadTasks('pending')
-    if (state.currentPage === 'dashboard') loadDashboard()
-  } catch(e) { showToast('Error completing task', 'error') }
+    toast('Done ✓', 'success')
+    if (el) { el.classList.add('done'); el.innerHTML = '<i class="fas fa-check" style="font-size:11px;color:#fff"></i>' }
+    if (state.page === 'tasks') loadTasks()
+    if (state.page === 'home') loadHome()
+  } catch { toast('Error', 'error') }
 }
 
 async function snoozeTask(id, days) {
   try {
     await axios.patch(`${API}/tasks/${id}/snooze`, { days })
-    showToast(`Task snoozed for ${days} day(s)`, 'success')
-    if (state.currentPage === 'tasks') loadTasks('pending')
-    if (state.currentPage === 'dashboard') loadDashboard()
-  } catch(e) { showToast('Error snoozing task', 'error') }
+    toast(`Snoozed ${days} day${days>1?'s':''}`, 'success')
+    if (state.page === 'tasks') loadTasks()
+    if (state.page === 'home') loadHome()
+  } catch { toast('Error', 'error') }
 }
 
-async function deleteTask(id) {
-  if (!confirm('Delete this task?')) return
-  await axios.delete(`${API}/tasks/${id}`)
-  showToast('Task deleted', 'success')
-  loadTasks('pending')
-}
-
-async function generateTasks(dealId) {
+async function delTask(id) {
   try {
-    showToast('Generating smart tasks...', 'info')
+    await axios.delete(`${API}/tasks/${id}`)
+    toast('Deleted', 'success')
+    if (state.page === 'tasks') loadTasks()
+  } catch { toast('Error', 'error') }
+}
+
+async function genTasks(dealId) {
+  try {
+    toast('Generating tasks…', 'info')
     const { data } = await axios.post(`${API}/tasks/generate`, { deal_id: dealId })
-    showToast(`Created ${data.created_count} tasks!`, 'success')
-    if (state.currentDeal?.id === dealId) openDealDetail(dealId)
-  } catch(e) { showToast('Error generating tasks', 'error') }
+    toast(`${data.created_count} tasks generated!`, 'success')
+    openDeal(dealId)
+  } catch { toast('Error generating tasks', 'error') }
 }
 
-// ============================================================
-// COMMUNICATIONS
-// ============================================================
-async function loadCommunications() {
-  try {
-    const { data } = await axios.get(`${API}/communications`, { params: { limit: 50 } })
-    renderCommunicationsPage(data.communications)
-  } catch(e) { console.error(e) }
-}
-
-function renderCommunicationsPage(comms) {
-  const el = document.getElementById('communications-list')
-  if (!comms?.length) {
-    el.innerHTML = `<div class="card text-center py-12 text-slate-400"><i class="fas fa-comments text-4xl mb-3"></i><br>No communications logged yet.</div>`
-    return
-  }
-  el.innerHTML = `
-    <div class="card overflow-hidden p-0">
-      <table class="w-full text-sm">
-        <thead><tr class="bg-slate-50 border-b">
-          <th class="text-left p-3">Type</th>
-          <th class="text-left p-3">Subject / Content</th>
-          <th class="text-left p-3">Contact</th>
-          <th class="text-left p-3">Deal</th>
-          <th class="text-left p-3">Date</th>
-          <th class="text-left p-3">Status</th>
-        </tr></thead>
-        <tbody>${comms.map(c => `
-          <tr class="border-b border-slate-50 hover:bg-slate-50">
-            <td class="p-3">
-              <div class="flex items-center gap-2">
-                <div class="w-7 h-7 rounded-full flex items-center justify-content-center" style="display:flex;align-items:center;justify-content:center;background:${c.direction === 'inbound' ? '#dbeafe' : '#f0fdf4'}">
-                  <i class="fas ${COMM_ICONS[c.type] || 'fa-comment'} text-xs" style="color:${c.direction === 'inbound' ? '#3b82f6' : '#22c55e'}"></i>
-                </div>
-                <span class="text-xs font-medium text-slate-600">${c.type?.toUpperCase()}</span>
-              </div>
-            </td>
-            <td class="p-3 max-w-xs">
-              <div class="text-slate-700 font-medium truncate">${c.subject || '—'}</div>
-              ${c.summary ? `<div class="text-xs text-slate-400 truncate">${c.summary}</div>` : ''}
-            </td>
-            <td class="p-3 text-slate-600 text-sm">${c.contact_name || c.from_address || '—'}</td>
-            <td class="p-3 text-slate-500 text-xs">${c.deal_title || '—'}</td>
-            <td class="p-3 text-slate-400 text-xs">${timeAgo(c.created_at)}</td>
-            <td class="p-3"><span class="text-xs text-slate-500">${c.status || '—'}</span></td>
-          </tr>
-        `).join('')}</tbody>
-      </table>
-    </div>
-  `
-}
-
-async function syncGmail() {
-  showToast('Syncing Gmail...', 'info')
-  try {
-    const { data } = await axios.post(`${API}/communications/gmail-sync`)
-    showToast(data.message || 'Sync complete', data.success ? 'success' : 'warning')
-    if (state.currentPage === 'communications') loadCommunications()
-  } catch(e) { showToast('Gmail sync error: ' + e.message, 'error') }
-}
-
-// ============================================================
-// ESTIMATES
-// ============================================================
-async function loadEstimates() {
-  try {
-    const { data } = await axios.get(`${API}/estimates`)
-    renderEstimatesPage(data.estimates)
-  } catch(e) { console.error(e) }
-}
-
-function renderEstimatesPage(estimates) {
-  const el = document.getElementById('estimates-list')
-  if (!estimates?.length) {
-    el.innerHTML = `<div class="card text-center py-12 text-slate-400"><i class="fas fa-file-invoice text-4xl mb-3"></i><br>No estimates yet.</div>`
-    return
-  }
-  el.innerHTML = `
-    <div class="card overflow-hidden p-0">
-      <table class="w-full text-sm">
-        <thead><tr class="bg-slate-50 border-b">
-          <th class="text-left p-3">Number</th>
-          <th class="text-left p-3">Contact</th>
-          <th class="text-left p-3">Total</th>
-          <th class="text-left p-3">Status</th>
-          <th class="text-left p-3">Valid Until</th>
-          <th class="p-3"></th>
-        </tr></thead>
-        <tbody>${estimates.map(e => `
-          <tr class="border-b hover:bg-slate-50">
-            <td class="p-3 font-medium text-indigo-600">${e.estimate_number}</td>
-            <td class="p-3 text-slate-600">${e.contact_name || '—'}</td>
-            <td class="p-3 text-green-600 font-semibold">$${fmtNum(e.total)}</td>
-            <td class="p-3"><span class="stage-badge text-xs" style="background:#f0fdf420;color:#16a34a">${e.status}</span></td>
-            <td class="p-3 text-slate-400 text-xs">${e.valid_until || '—'}</td>
-            <td class="p-3">
-              ${e.quickbooks_url ? `<a href="${e.quickbooks_url}" target="_blank" class="btn btn-xs btn-secondary">View QB</a>` : ''}
-            </td>
-          </tr>
-        `).join('')}</tbody>
-      </table>
-    </div>
-  `
-}
-
-// ============================================================
-// INVOICES
-// ============================================================
-async function loadInvoices() {
-  try {
-    const { data } = await axios.get(`${API}/invoices`)
-    renderInvoicesPage(data.invoices)
-  } catch(e) { console.error(e) }
-}
-
-function renderInvoicesPage(invoices) {
-  const el = document.getElementById('invoices-list')
-  if (!invoices?.length) {
-    el.innerHTML = `<div class="card text-center py-12 text-slate-400"><i class="fas fa-dollar-sign text-4xl mb-3"></i><br>No invoices yet.</div>`
-    return
-  }
-  el.innerHTML = `
-    <div class="card overflow-hidden p-0">
-      <table class="w-full text-sm">
-        <thead><tr class="bg-slate-50 border-b">
-          <th class="text-left p-3">Number</th>
-          <th class="text-left p-3">Contact</th>
-          <th class="text-left p-3">Total</th>
-          <th class="text-left p-3">Amount Due</th>
-          <th class="text-left p-3">Status</th>
-          <th class="text-left p-3">Due Date</th>
-          <th class="p-3"></th>
-        </tr></thead>
-        <tbody>${invoices.map(i => {
-          const isOverdue = i.status !== 'paid' && i.due_date && new Date(i.due_date) < new Date()
-          return `
-          <tr class="border-b hover:bg-slate-50 ${isOverdue ? 'bg-red-50' : ''}">
-            <td class="p-3 font-medium text-indigo-600">${i.invoice_number}</td>
-            <td class="p-3 text-slate-600">${i.contact_name || '—'}</td>
-            <td class="p-3 text-green-600 font-semibold">$${fmtNum(i.total)}</td>
-            <td class="p-3 ${i.amount_due > 0 ? 'text-red-600 font-semibold' : 'text-slate-400'}">$${fmtNum(i.amount_due || 0)}</td>
-            <td class="p-3">
-              <span class="stage-badge text-xs" style="background:${i.status === 'paid' ? '#22c55e20' : isOverdue ? '#ef444420' : '#f59e0b20'};color:${i.status === 'paid' ? '#16a34a' : isOverdue ? '#dc2626' : '#d97706'}">
-                ${i.status}${isOverdue ? ' (OVERDUE)' : ''}
-              </span>
-            </td>
-            <td class="p-3 text-slate-400 text-xs">${i.due_date || '—'}</td>
-            <td class="p-3">
-              <div class="flex gap-1">
-                ${i.status !== 'paid' ? `<button class="btn btn-xs btn-success" onclick="markInvoicePaid(${i.id})">Mark Paid</button>` : ''}
-                ${i.quickbooks_url ? `<a href="${i.quickbooks_url}" target="_blank" class="btn btn-xs btn-secondary">QB</a>` : ''}
-              </div>
-            </td>
-          </tr>`
-        }).join('')}</tbody>
-      </table>
-    </div>
-  `
-}
-
-async function markInvoicePaid(id) {
-  const method = prompt('Payment method? (check, wire, credit_card, cash)')
-  if (method === null) return
-  try {
-    await axios.patch(`${API}/invoices/${id}/paid`, { payment_method: method })
-    showToast('💰 Invoice marked as paid! Order can now be placed.', 'success')
-    loadInvoices()
-  } catch(e) { showToast('Error', 'error') }
-}
-
-// ============================================================
-// PURCHASE ORDERS
-// ============================================================
-async function loadPurchaseOrders() {
-  try {
-    const { data } = await axios.get(`${API}/purchase-orders`)
-    renderPOsPage(data.purchase_orders)
-  } catch(e) { console.error(e) }
-}
-
-function renderPOsPage(pos) {
-  const el = document.getElementById('po-list')
-  if (!pos?.length) {
-    el.innerHTML = `<div class="card text-center py-12 text-slate-400"><i class="fas fa-shopping-cart text-4xl mb-3"></i><br>No purchase orders yet.</div>`
-    return
-  }
-  el.innerHTML = `
-    <div class="card overflow-hidden p-0">
-      <table class="w-full text-sm">
-        <thead><tr class="bg-slate-50 border-b">
-          <th class="text-left p-3">PO Number</th>
-          <th class="text-left p-3">Supplier</th>
-          <th class="text-left p-3">Deal</th>
-          <th class="text-left p-3">Total</th>
-          <th class="text-left p-3">Status</th>
-          <th class="text-left p-3">Expected Delivery</th>
-          <th class="p-3"></th>
-        </tr></thead>
-        <tbody>${pos.map(po => `
-          <tr class="border-b hover:bg-slate-50 cursor-pointer" onclick="showPODetail(${po.id})">
-            <td class="p-3 font-medium text-indigo-600">${po.po_number}</td>
-            <td class="p-3 text-slate-600">${po.supplier_name || '—'}</td>
-            <td class="p-3 text-slate-500 text-xs">${po.deal_title || '—'}</td>
-            <td class="p-3 text-green-600 font-semibold">$${fmtNum(po.total)}</td>
-            <td class="p-3">
-              <span class="stage-badge text-xs" style="background:${PO_STATUS_COLORS[po.status] || '#94a3b8'}20;color:${PO_STATUS_COLORS[po.status] || '#94a3b8'}">
-                ${po.status?.replace(/_/g,' ')}
-              </span>
-            </td>
-            <td class="p-3 text-slate-400 text-xs">${po.expected_delivery || '—'}</td>
-            <td class="p-3">
-              <div class="flex gap-1" onclick="event.stopPropagation()">
-                ${po.status === 'draft' || po.status === 'approved' ? `<button class="btn btn-xs btn-secondary" onclick="requestQuote(${po.id})">Request Quote</button>` : ''}
-                ${po.status === 'confirmed' ? `<button class="btn btn-xs btn-primary" onclick="showAddTracking(${po.id})">Add Tracking</button>` : ''}
-                <button class="btn btn-xs btn-secondary" onclick="editPOStatus(${po.id})">Update</button>
-              </div>
-            </td>
-          </tr>
-        `).join('')}</tbody>
-      </table>
-    </div>
-  `
-}
-
-async function showPODetail(id) {
-  try {
-    const { data } = await axios.get(`${API}/purchase-orders/${id}`)
-    const po = data.purchase_order
-    const lineItems = JSON.parse(po.line_items || '[]')
-    const tracking = JSON.parse(po.tracking_numbers || '[]')
-    
-    const modal = document.createElement('div')
-    modal.className = 'modal open'
-    modal.innerHTML = `
-      <div class="modal-box modal-box-lg">
-        <div class="flex items-center justify-between mb-4">
-          <div>
-            <h3 class="text-xl font-bold">${po.po_number}</h3>
-            <span class="stage-badge text-xs mt-1" style="background:${PO_STATUS_COLORS[po.status]}20;color:${PO_STATUS_COLORS[po.status]}">${po.status?.replace(/_/g,' ')}</span>
-          </div>
-          <button onclick="this.closest('.modal').remove()" class="text-slate-400 text-xl">&times;</button>
-        </div>
-        <div class="grid-2 mb-4">
-          <div><span class="text-sm text-slate-500">Supplier:</span> <span class="font-medium">${po.supplier_name || '—'}</span></div>
-          <div><span class="text-sm text-slate-500">Deal:</span> <span class="font-medium">${po.deal_title || '—'}</span></div>
-          <div><span class="text-sm text-slate-500">Total:</span> <span class="text-green-600 font-bold">$${fmtNum(po.total)}</span></div>
-          <div><span class="text-sm text-slate-500">Expected:</span> <span class="font-medium">${po.expected_delivery || '—'}</span></div>
-          ${po.supplier_order_number ? `<div><span class="text-sm text-slate-500">Supplier Order#:</span> <span class="font-medium">${po.supplier_order_number}</span></div>` : ''}
-        </div>
-        <div class="mb-4">
-          <h4 class="text-sm font-semibold mb-2">Line Items</h4>
-          ${lineItems.length ? `
-            <table class="w-full text-xs border rounded-lg overflow-hidden">
-              <thead class="bg-slate-50"><tr>
-                <th class="text-left p-2">Item</th>
-                <th class="text-right p-2">Qty</th>
-                <th class="text-right p-2">Price</th>
-                <th class="text-right p-2">Total</th>
-              </tr></thead>
-              <tbody>${lineItems.map((item, i) => `
-                <tr class="border-t"><td class="p-2">${item.description || item.name}</td>
-                <td class="p-2 text-right">${item.quantity || 1}</td>
-                <td class="p-2 text-right">$${fmtNum(item.unit_price || 0)}</td>
-                <td class="p-2 text-right font-medium">$${fmtNum((item.quantity || 1) * (item.unit_price || 0))}</td></tr>
-              `).join('')}</tbody>
-            </table>
-          ` : '<div class="text-slate-400 text-xs">No line items</div>'}
-        </div>
-        ${tracking.length ? `
-          <div class="mb-4">
-            <h4 class="text-sm font-semibold mb-2">Tracking Numbers</h4>
-            ${tracking.map(t => `<div class="text-sm text-indigo-600 font-mono">${t}</div>`).join('')}
-          </div>
-        ` : ''}
-        <div class="flex gap-2 flex-wrap">
-          ${po.status === 'draft' || po.status === 'approved' ? `<button class="btn btn-secondary btn-sm" onclick="requestQuote(${po.id})"><i class="fas fa-paper-plane"></i> Request Quote</button>` : ''}
-          ${po.status === 'confirmed' ? `<button class="btn btn-primary btn-sm" onclick="showAddTracking(${po.id})"><i class="fas fa-truck"></i> Add Tracking</button>` : ''}
-          <button class="btn btn-secondary btn-sm" onclick="editPOStatus(${po.id})">Update Status</button>
-        </div>
-      </div>
-    `
-    document.body.appendChild(modal)
-    modal.addEventListener('click', e => { if (e.target === modal) modal.remove() })
-  } catch(e) { showToast('Error loading PO', 'error') }
-}
-
-async function loadShipments() {
-  const el = document.getElementById('shipments-list')
-  try {
-    // Pull from POs with tracking
-    const { data } = await axios.get(`${API}/purchase-orders`)
-    const withTracking = data.purchase_orders.filter(p => {
-      try { return JSON.parse(p.tracking_numbers || '[]').length > 0 } catch { return false }
-    })
-    
-    if (!withTracking.length) {
-      el.innerHTML = `<div class="card text-center py-12 text-slate-400"><i class="fas fa-truck text-4xl mb-3"></i><br>No shipments to track yet.</div>`
-      return
-    }
-    
-    el.innerHTML = `
-      <div class="card overflow-hidden p-0">
-        <table class="w-full text-sm">
-          <thead><tr class="bg-slate-50 border-b">
-            <th class="text-left p-3">PO Number</th>
-            <th class="text-left p-3">Supplier</th>
-            <th class="text-left p-3">Tracking Numbers</th>
-            <th class="text-left p-3">Carrier</th>
-            <th class="text-left p-3">Status</th>
-            <th class="text-left p-3">Expected Delivery</th>
-          </tr></thead>
-          <tbody>${withTracking.map(po => {
-            const tracking = JSON.parse(po.tracking_numbers || '[]')
-            return `
-            <tr class="border-b hover:bg-slate-50">
-              <td class="p-3 font-medium text-indigo-600">${po.po_number}</td>
-              <td class="p-3">${po.supplier_name}</td>
-              <td class="p-3">${tracking.map(t => `
-                <div class="font-mono text-xs text-slate-700">${t}</div>
-              `).join('')}</td>
-              <td class="p-3 text-slate-500">${po.shipping_carrier || '—'}</td>
-              <td class="p-3">
-                <span class="stage-badge text-xs" style="background:${PO_STATUS_COLORS[po.status]}20;color:${PO_STATUS_COLORS[po.status]}">${po.status?.replace(/_/g,' ')}</span>
-              </td>
-              <td class="p-3 text-slate-400 text-xs">${po.expected_delivery || '—'}</td>
-            </tr>`
-          }).join('')}</tbody>
-        </table>
-      </div>
-    `
-  } catch(e) { console.error(e) }
-}
-
-// ============================================================
-// SETTINGS
-// ============================================================
-async function loadSettings() {
-  try {
-    const { data } = await axios.get(`${API}/settings`)
-    renderSettings(data.settings)
-  } catch(e) { console.error(e) }
-}
-
-function renderSettings(settings) {
-  const el = document.getElementById('settings-content')
-  el.innerHTML = `
-    <div class="grid gap-6" style="grid-template-columns:1fr 1fr">
-      <!-- Company Settings -->
-      <div class="card">
-        <h3 class="font-semibold text-slate-700 mb-4"><i class="fas fa-building text-indigo-500 mr-2"></i>Company Info</h3>
-        <div class="space-y-3">
-          <div><label class="label">Company Name</label><input class="input" id="s-company_name" value="${settings.company_name || 'Amberway Equine LLC'}"></div>
-          <div><label class="label">Company Email</label><input class="input" id="s-company_email" value="${settings.company_email || ''}"></div>
-          <div><label class="label">Company Phone</label><input class="input" id="s-company_phone" value="${settings.company_phone || ''}"></div>
-          <button class="btn btn-primary btn-sm" onclick="saveSettings(['company_name','company_email','company_phone'])">
-            <i class="fas fa-save"></i> Save
-          </button>
-        </div>
-      </div>
-      
-      <!-- Gmail Integration -->
-      <div class="card">
-        <h3 class="font-semibold text-slate-700 mb-4"><i class="fab fa-google text-red-500 mr-2"></i>Gmail Integration</h3>
-        <div class="p-3 rounded-lg mb-3 ${settings.gmail_connected ? 'bg-green-50 border border-green-200' : 'bg-yellow-50 border border-yellow-200'}">
-          <div class="text-sm font-medium ${settings.gmail_connected ? 'text-green-700' : 'text-yellow-700'}">
-            ${settings.gmail_connected ? '✅ Gmail Connected' : '⚠️ Gmail Not Connected'}
-          </div>
-          <div class="text-xs text-slate-500 mt-1">
-            ${settings.gmail_connected ? 'Emails are being sent and received through Gmail' : 'Connect Gmail to send emails and sync inbox'}
-          </div>
-        </div>
-        <button class="btn btn-primary btn-sm mb-2" onclick="connectGmail()">
-          <i class="fab fa-google"></i> ${settings.gmail_connected ? 'Reconnect' : 'Connect'} Gmail
-        </button>
-        <button class="btn btn-secondary btn-sm" onclick="syncGmail()">
-          <i class="fas fa-sync"></i> Sync Inbox
-        </button>
-        <div class="mt-3 text-xs text-slate-400">
-          Requires: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET secrets in Cloudflare
-        </div>
-      </div>
-      
-      <!-- QuickBooks -->
-      <div class="card">
-        <h3 class="font-semibold text-slate-700 mb-4"><i class="fas fa-calculator text-blue-500 mr-2"></i>QuickBooks Online</h3>
-        <div class="p-3 rounded-lg mb-3 ${settings.quickbooks_connected ? 'bg-green-50 border border-green-200' : 'bg-yellow-50 border border-yellow-200'}">
-          <div class="text-sm font-medium ${settings.quickbooks_connected ? 'text-green-700' : 'text-yellow-700'}">
-            ${settings.quickbooks_connected ? '✅ QuickBooks Connected' : '⚠️ QuickBooks Not Connected'}
-          </div>
-          <div class="text-xs text-slate-500 mt-1">
-            ${settings.quickbooks_connected ? 'Estimates and invoices sync with QuickBooks' : 'Connect to sync estimates and invoices'}
-          </div>
-        </div>
-        <button class="btn btn-primary btn-sm mb-2" onclick="connectQuickBooks()">
-          <i class="fas fa-calculator"></i> ${settings.quickbooks_connected ? 'Reconnect' : 'Connect'} QuickBooks
-        </button>
-        <div class="mt-3 text-xs text-slate-400">
-          Requires: QB_CLIENT_ID, QB_CLIENT_SECRET secrets in Cloudflare
-        </div>
-      </div>
-      
-      <!-- Twilio SMS/Voice -->
-      <div class="card">
-        <h3 class="font-semibold text-slate-700 mb-4"><i class="fas fa-phone text-green-500 mr-2"></i>Twilio SMS & Voice</h3>
-        <div class="p-3 rounded-lg mb-3 ${settings.twilio_connected ? 'bg-green-50 border border-green-200' : 'bg-yellow-50 border border-yellow-200'}">
-          <div class="text-sm font-medium ${settings.twilio_connected ? 'text-green-700' : 'text-yellow-700'}">
-            ${settings.twilio_connected ? '✅ Twilio Connected' : '⚠️ Twilio Not Connected'}
-          </div>
-          <div class="text-xs text-slate-500 mt-1">
-            ${settings.twilio_connected ? 'SMS and calls are enabled' : 'Connect Twilio for SMS and call logging'}
-          </div>
-        </div>
-        <div class="space-y-2">
-          <div><label class="label">Twilio Phone Number</label>
-            <input class="input" id="s-twilio_phone_number" value="${settings.twilio_phone_number || ''}" placeholder="+15555551234">
-          </div>
-          <button class="btn btn-primary btn-sm" onclick="saveSettings(['twilio_phone_number'])">
-            <i class="fas fa-save"></i> Save Phone Number
-          </button>
-        </div>
-        <div class="mt-3 text-xs text-slate-400">
-          Requires: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER secrets
-        </div>
-      </div>
-      
-      <!-- AI Settings -->
-      <div class="card">
-        <h3 class="font-semibold text-slate-700 mb-4"><i class="fas fa-brain text-purple-500 mr-2"></i>AI Analysis</h3>
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <div>
-              <div class="text-sm font-medium">AI Deal Analysis</div>
-              <div class="text-xs text-slate-400">Auto-analyze deals and suggest actions</div>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" id="s-openai_enabled" ${settings.openai_enabled ? 'checked' : ''} class="sr-only peer">
-              <div class="w-10 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-indigo-600 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
-            </label>
-          </div>
-          <div class="text-xs text-slate-400">
-            Requires: OPENAI_API_KEY secret in Cloudflare
-          </div>
-          <div class="text-xs text-slate-500 bg-slate-50 p-2 rounded">
-            The AI uses rule-based analysis when no API key is configured, providing smart stage-based suggestions.
-          </div>
-        </div>
-      </div>
-      
-      <!-- Business Settings -->
-      <div class="card">
-        <h3 class="font-semibold text-slate-700 mb-4"><i class="fas fa-cog text-slate-500 mr-2"></i>Business Settings</h3>
-        <div class="space-y-3">
-          <div><label class="label">Follow-up Reminder (days)</label>
-            <input class="input" id="s-follow_up_reminder_days" type="number" value="${settings.follow_up_reminder_days || 3}">
-          </div>
-          <div><label class="label">Default Estimate Valid (days)</label>
-            <input class="input" id="s-estimate_valid_days" type="number" value="${settings.estimate_valid_days || 30}">
-          </div>
-          <div><label class="label">Default Invoice Due (days)</label>
-            <input class="input" id="s-invoice_due_days" type="number" value="${settings.invoice_due_days || 30}">
-          </div>
-          <div><label class="label">Default Tax Rate (%)</label>
-            <input class="input" id="s-tax_rate_default" type="number" step="0.1" value="${settings.tax_rate_default || 0}">
-          </div>
-          <button class="btn btn-primary btn-sm" onclick="saveSettings(['follow_up_reminder_days','estimate_valid_days','invoice_due_days','tax_rate_default'])">
-            <i class="fas fa-save"></i> Save Settings
-          </button>
-        </div>
-      </div>
-    </div>
-    
-    <!-- Setup Guide -->
-    <div class="card mt-6">
-      <h3 class="font-semibold text-slate-700 mb-4"><i class="fas fa-rocket text-orange-500 mr-2"></i>Integration Setup Guide</h3>
-      <div class="grid gap-4" style="grid-template-columns:1fr 1fr 1fr">
-        <div class="p-3 bg-slate-50 rounded-lg">
-          <div class="font-semibold text-sm mb-2">1. Gmail Setup</div>
-          <div class="text-xs text-slate-500 space-y-1">
-            <div>• Go to Google Cloud Console</div>
-            <div>• Create OAuth 2.0 credentials</div>
-            <div>• Add GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET as Cloudflare secrets</div>
-            <div>• Click "Connect Gmail" above</div>
-          </div>
-        </div>
-        <div class="p-3 bg-slate-50 rounded-lg">
-          <div class="font-semibold text-sm mb-2">2. Twilio Setup</div>
-          <div class="text-xs text-slate-500 space-y-1">
-            <div>• Sign up at twilio.com</div>
-            <div>• Get a phone number</div>
-            <div>• Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER</div>
-            <div>• Set webhook URL to /api/communications/twilio-webhook</div>
-          </div>
-        </div>
-        <div class="p-3 bg-slate-50 rounded-lg">
-          <div class="font-semibold text-sm mb-2">3. QuickBooks Setup</div>
-          <div class="text-xs text-slate-500 space-y-1">
-            <div>• Go to developer.intuit.com</div>
-            <div>• Create an app with accounting scope</div>
-            <div>• Add QB_CLIENT_ID + QB_CLIENT_SECRET</div>
-            <div>• Click "Connect QuickBooks" above</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `
-}
-
-async function saveSettings(keys) {
-  const data = {}
-  keys.forEach(k => {
-    const el = document.getElementById(`s-${k}`)
-    if (el) data[k] = el.type === 'checkbox' ? el.checked : el.value
-  })
-  try {
-    await axios.put(`${API}/settings`, data)
-    showToast('Settings saved!', 'success')
-  } catch(e) { showToast('Error saving settings', 'error') }
-}
-
-async function connectGmail() {
-  try {
-    const { data } = await axios.get(`${API}/gmail/auth-url`)
-    if (data.auth_url) {
-      window.open(data.auth_url, '_blank', 'width=500,height=600')
-    } else {
-      showToast(data.error || 'Gmail Client ID not configured', 'error')
-    }
-  } catch(e) { showToast('Error: ' + e.message, 'error') }
-}
-
-async function connectQuickBooks() {
-  try {
-    const { data } = await axios.get(`${API}/quickbooks/auth-url`)
-    if (data.auth_url) {
-      window.open(data.auth_url, '_blank', 'width=500,height=600')
-    } else {
-      showToast(data.error || 'QuickBooks not configured', 'error')
-    }
-  } catch(e) { showToast('Error: ' + e.message, 'error') }
-}
-
-// ============================================================
-// FORMS & MODALS
-// ============================================================
-function showQuickAdd() { document.getElementById('modal-quick-add').classList.add('open') }
-
-async function showAddContact() {
-  const form = document.getElementById('contact-form')
-  form.reset()
-  form.querySelector('[name=id]').value = ''
-  document.getElementById('contact-modal-title').textContent = 'Add Contact'
-  document.getElementById('modal-contact').classList.add('open')
-}
-
-async function editContact(id) {
-  try {
-    const { data } = await axios.get(`${API}/contacts/${id}`)
-    const c = data.contact
-    const form = document.getElementById('contact-form')
-    Object.keys(c).forEach(k => { 
-      const el = form.querySelector(`[name=${k}]`)
-      if (el) el.value = c[k] || ''
-    })
-    document.getElementById('contact-modal-title').textContent = 'Edit Contact'
-    document.getElementById('modal-contact').classList.add('open')
-  } catch(e) { showToast('Error loading contact', 'error') }
-}
-
-async function saveContact(e) {
-  e.preventDefault()
-  const form = e.target
-  const data = Object.fromEntries(new FormData(form))
-  const id = data.id
-  delete data.id
-  
-  try {
-    if (id) {
-      await axios.put(`${API}/contacts/${id}`, data)
-    } else {
-      await axios.post(`${API}/contacts`, data)
-    }
-    showToast(`Contact ${id ? 'updated' : 'created'}!`, 'success')
-    closeModal('modal-contact')
-    if (state.currentPage === 'contacts') loadContacts()
-  } catch(e) { showToast('Error saving contact: ' + e.message, 'error') }
-}
-
-async function showAddDeal(stage = 'lead') {
-  await loadContactsForSelect('deal-contact-select')
-  const form = document.getElementById('deal-form')
-  form.reset()
-  form.querySelector('[name=id]').value = ''
-  form.querySelector('[name=stage]').value = stage
-  document.getElementById('deal-modal-title').textContent = 'New Deal'
-  document.getElementById('modal-deal').classList.add('open')
-}
-
-function showAddDealInStage(stage) {
-  showAddDeal(stage)
-}
-
-function showAddDealForContact(contactId, contactName) {
-  showAddDeal().then(() => {
-    const select = document.getElementById('deal-contact-select')
-    select.value = contactId
-  })
-}
-
-async function editDeal(id) {
-  try {
-    await loadContactsForSelect('deal-contact-select')
-    const { data } = await axios.get(`${API}/deals/${id}`)
-    const d = data.deal
-    const form = document.getElementById('deal-form')
-    form.reset()
-    Object.keys(d).forEach(k => {
-      const el = form.querySelector(`[name=${k}]`)
-      if (el) el.value = d[k] || ''
-    })
-    const cats = JSON.parse(d.product_categories || '[]')
-    form.querySelectorAll('.product-cat').forEach(cb => {
-      cb.checked = cats.includes(cb.value)
-    })
-    document.getElementById('deal-modal-title').textContent = 'Edit Deal'
-    document.getElementById('modal-deal').classList.add('open')
-  } catch(e) { showToast('Error loading deal', 'error') }
-}
-
-async function saveDeal(e) {
-  e.preventDefault()
-  const form = e.target
-  const data = Object.fromEntries(new FormData(form))
-  const id = data.id
-  delete data.id
-  
-  const cats = [...form.querySelectorAll('.product-cat:checked')].map(cb => cb.value)
-  data.product_categories = cats
-  
-  try {
-    if (id) {
-      await axios.put(`${API}/deals/${id}`, data)
-    } else {
-      const resp = await axios.post(`${API}/deals`, data)
-      // Auto-generate tasks for new deal
-      try { await axios.post(`${API}/tasks/generate`, { deal_id: resp.data.deal.id }) } catch {}
-    }
-    showToast(`Deal ${id ? 'updated' : 'created'}!`, 'success')
-    closeModal('modal-deal')
-    if (state.currentPage === 'pipeline') loadPipeline()
-    if (state.currentPage === 'dashboard') loadDashboard()
-  } catch(e) { showToast('Error saving deal: ' + e.message, 'error') }
-}
-
-async function updateDealStage(id, stage) {
-  try {
-    await axios.patch(`${API}/deals/${id}/stage`, { stage })
-    showToast(`Stage updated to: ${STAGE_LABELS[stage]}`, 'success')
-    openDealDetail(id)
-    if (state.currentPage === 'pipeline') loadPipeline()
-    if (state.currentPage === 'dashboard') loadDashboard()
-  } catch(e) { showToast('Error updating stage', 'error') }
-}
-
-async function analyzeDeal(id) {
-  showToast('Running AI analysis...', 'info')
-  try {
-    const { data } = await axios.post(`${API}/ai/analyze-deal`, { deal_id: id })
-    showToast('AI analysis complete!', 'success')
-    openDealDetail(id)
-  } catch(e) { showToast('AI analysis error', 'error') }
-}
-
-async function showAddTask(dealId = null) {
-  await loadDealsForSelect('task-deal-select')
-  const form = document.getElementById('task-form')
-  form.reset()
-  if (dealId) form.querySelector('[name=deal_id]').value = dealId
-  document.getElementById('modal-task').classList.add('open')
-}
-
-async function saveTask(e) {
-  e.preventDefault()
-  const data = Object.fromEntries(new FormData(e.target))
-  try {
-    await axios.post(`${API}/tasks`, data)
-    showToast('Task created!', 'success')
-    closeModal('modal-task')
-    if (state.currentPage === 'tasks') loadTasks('pending')
-  } catch(e) { showToast('Error creating task', 'error') }
-}
-
-function showLogComm() {
-  loadContactsForSelect('comm-contact-select')
-  loadDealsForSelect('comm-deal-select')
-  document.getElementById('modal-comm').classList.add('open')
-}
-
-function openCommModal(dealId, contactId) {
-  showLogComm()
-  setTimeout(() => {
-    if (dealId) document.getElementById('comm-deal-select').value = dealId
-    if (contactId) document.getElementById('comm-contact-select').value = contactId
-  }, 300)
-}
-
-function openSMSModal(dealId, contactId) {
-  showLogComm()
-  setCommType('sms', document.querySelector('#comm-type-tabs .tab-btn'))
-  setTimeout(() => {
-    if (dealId) document.getElementById('comm-deal-select').value = dealId
-    if (contactId) document.getElementById('comm-contact-select').value = contactId
-  }, 300)
-}
-
-function setCommType(type, btn) {
-  state.commType = type
-  document.querySelectorAll('#comm-type-tabs .tab-btn').forEach(b => b.classList.remove('active'))
-  if (btn) btn.classList.add('active')
-  
-  document.getElementById('comm-email-fields').style.display = type === 'email' ? 'block' : 'none'
-  document.getElementById('comm-sms-fields').style.display = type === 'sms' ? 'block' : 'none'
-  document.getElementById('comm-call-fields').style.display = type === 'call' ? 'block' : 'none'
-  document.getElementById('comm-note-fields').style.display = type === 'note' ? 'block' : 'none'
-  
-  document.querySelector('[name=comm_type]').value = type
-  
-  const btnLabels = { email: 'Send Email', sms: 'Send SMS', call: 'Log Call', note: 'Save Note' }
-  const icons = { email: 'fa-paper-plane', sms: 'fa-paper-plane', call: 'fa-phone', note: 'fa-save' }
-  document.getElementById('comm-submit-btn').innerHTML = `<i class="fas ${icons[type]}"></i> ${btnLabels[type]}`
-}
-
-async function saveComm(e) {
-  e.preventDefault()
-  const formData = new FormData(e.target)
-  const data = Object.fromEntries(formData)
-  const type = data.comm_type || state.commType
-  
-  try {
-    if (type === 'email') {
-      const payload = {
-        deal_id: data.deal_id || null,
-        contact_id: data.contact_id || null,
-        to: data.to,
-        subject: data.subject,
-        html: data.body,
-        body: data.body
-      }
-      const { data: resp } = await axios.post(`${API}/communications/send-email`, payload)
-      showToast(resp.message, resp.success ? 'success' : 'warning')
-    } else if (type === 'sms') {
-      const payload = {
-        deal_id: data.deal_id || null,
-        contact_id: data.contact_id || null,
-        to: data.sms_to,
-        message: data.sms_body
-      }
-      const { data: resp } = await axios.post(`${API}/communications/send-sms`, payload)
-      showToast(resp.message, resp.success ? 'success' : 'warning')
-    } else if (type === 'call') {
-      await axios.post(`${API}/communications/log-call`, {
-        deal_id: data.deal_id || null,
-        contact_id: data.contact_id || null,
-        direction: data.direction,
-        duration_seconds: (parseInt(data.duration || '0') * 60),
-        notes: data.call_notes
-      })
-      showToast('Call logged!', 'success')
-    } else {
-      await axios.post(`${API}/communications`, {
-        deal_id: data.deal_id || null,
-        contact_id: data.contact_id || null,
-        type: 'note',
-        direction: 'internal',
-        body: data.note_body,
-        status: 'completed'
-      })
-      showToast('Note saved!', 'success')
-    }
-    closeModal('modal-comm')
-    if (state.currentPage === 'communications') loadCommunications()
-  } catch(err) { showToast('Error: ' + err.message, 'error') }
-}
-
-function quickEmail(contactId, email, firstName) {
-  showLogComm()
-  setCommType('email', null)
-  setTimeout(() => {
-    if (contactId) document.getElementById('comm-contact-select').value = contactId
-    if (email) document.querySelector('[name=to]').value = email
-  }, 300)
-}
-
-function quickSMS(contactId, phone) {
-  showLogComm()
-  setCommType('sms', null)
-  setTimeout(() => {
-    if (contactId) document.getElementById('comm-contact-select').value = contactId
-    if (phone) document.querySelector('[name=sms_to]').value = phone
-  }, 300)
-}
-
-// Purchase Order Form
-let poLineItemCount = 0
-function showCreatePO() {
-  loadSuppliersForSelect('po-supplier-select')
-  loadDealsForSelect('po-deal-select')
-  poLineItemCount = 0
-  document.getElementById('po-line-items').innerHTML = ''
-  document.getElementById('po-form').reset()
-  addPOLineItem()
-  document.getElementById('modal-po').classList.add('open')
-}
-
-function openCreatePOModal(dealId) {
-  showCreatePO()
-  setTimeout(() => {
-    if (dealId) document.getElementById('po-deal-select').value = dealId
-  }, 300)
-}
-
-function addPOLineItem() {
-  const container = document.getElementById('po-line-items')
-  const idx = poLineItemCount++
-  const div = document.createElement('div')
-  div.className = 'flex gap-2 mb-2 items-start'
-  div.innerHTML = `
-    <input placeholder="Item description" class="input flex-1" id="po-item-desc-${idx}">
-    <input type="number" placeholder="Qty" class="input" style="width:60px" id="po-item-qty-${idx}" value="1" oninput="updatePOTotal()">
-    <input type="number" placeholder="Unit Price" class="input" style="width:100px" id="po-item-price-${idx}" oninput="updatePOTotal()">
-    <button type="button" class="btn btn-xs btn-danger" onclick="this.parentElement.remove();updatePOTotal()"><i class="fas fa-times"></i></button>
-  `
-  container.appendChild(div)
-}
-
-function updatePOTotal() {
-  let subtotal = 0
-  for (let i = 0; i < poLineItemCount; i++) {
-    const qty = parseFloat(document.getElementById(`po-item-qty-${i}`)?.value || 0)
-    const price = parseFloat(document.getElementById(`po-item-price-${i}`)?.value || 0)
-    if (!isNaN(qty) && !isNaN(price)) subtotal += qty * price
-  }
-  const shipping = parseFloat(document.querySelector('[name=shipping_amount]')?.value || 0)
-  const total = subtotal + shipping
-  const subtotalEl = document.getElementById('po-subtotal')
-  const totalEl = document.getElementById('po-total')
-  if (subtotalEl) subtotalEl.value = subtotal.toFixed(2)
-  if (totalEl) totalEl.value = total.toFixed(2)
-}
-
-async function savePO(e) {
-  e.preventDefault()
-  const data = Object.fromEntries(new FormData(e.target))
-  
-  // Collect line items
-  const lineItems = []
-  for (let i = 0; i < poLineItemCount; i++) {
-    const desc = document.getElementById(`po-item-desc-${i}`)?.value
-    const qty = document.getElementById(`po-item-qty-${i}`)?.value
-    const price = document.getElementById(`po-item-price-${i}`)?.value
-    if (desc) lineItems.push({ description: desc, quantity: parseFloat(qty || 1), unit_price: parseFloat(price || 0) })
-  }
-  
-  data.line_items = lineItems
-  
-  try {
-    await axios.post(`${API}/purchase-orders`, data)
-    showToast('Purchase Order created!', 'success')
-    closeModal('modal-po')
-    if (state.currentPage === 'purchase-orders') loadPurchaseOrders()
-  } catch(e) { showToast('Error: ' + e.message, 'error') }
-}
-
+// ── ORDERS ───────────────────────────────────────────
 async function requestQuote(poId) {
   try {
     const { data } = await axios.post(`${API}/purchase-orders/${poId}/request-quote`)
-    showToast(data.message, 'success')
-    loadPurchaseOrders()
-  } catch(e) { showToast('Error requesting quote', 'error') }
+    toast(data.message || 'Quote requested!', 'success')
+    loadOrders()
+  } catch { toast('Error requesting quote', 'error') }
 }
 
-function showAddTracking(poId) {
-  document.getElementById('tracking-form').reset()
-  document.querySelector('#tracking-form [name=po_id]').value = poId
-  document.getElementById('modal-tracking').classList.add('open')
+function addTracking(poId) {
+  const carrier = prompt('Carrier? (UPS, FedEx, USPS, Estes, XPO, Other)')
+  if (!carrier) return
+  const tracking = prompt('Tracking number:')
+  if (!tracking) return
+  axios.post(`${API}/purchase-orders/${poId}/add-tracking`, { carrier, tracking_number: tracking })
+    .then(() => { toast('Tracking added! Customer notified.', 'success'); loadOrders() })
+    .catch(() => toast('Error adding tracking', 'error'))
 }
 
-async function saveTracking(e) {
-  e.preventDefault()
-  const data = Object.fromEntries(new FormData(e.target))
+async function promptPOStatus(id) {
+  const s = ['draft','quote_requested','quote_received','approved','submitted','confirmed','in_production','shipped','received','cancelled']
+  const status = prompt(`New status:\n${s.join(', ')}`)
+  if (!status || !s.includes(status)) return
   try {
-    const { data: resp } = await axios.post(`${API}/purchase-orders/${data.po_id}/add-tracking`, {
-      carrier: data.carrier,
-      tracking_number: data.tracking_number
+    await axios.put(`${API}/purchase-orders/${id}`, { status })
+    toast('Status updated!', 'success')
+    loadOrders(); closeSheet('sh-panel')
+  } catch { toast('Error', 'error') }
+}
+
+// ── HELPERS ──────────────────────────────────────────
+async function fillSel(selId, url, dataKey, mapper) {
+  const sel = document.getElementById(selId)
+  if (!sel) return
+  try {
+    const { data } = await axios.get(url)
+    const items = data[dataKey] || []
+    const first = sel.options[0]
+    sel.innerHTML = ''
+    sel.appendChild(first || new Option('None',''))
+    items.forEach(item => { const o = mapper(item); sel.add(new Option(o.label, o.value)) })
+  } catch {}
+}
+
+function fmtMoney(n) {
+  const v = parseFloat(n) || 0
+  if (v >= 1e6) return (v/1e6).toFixed(1) + 'M'
+  if (v >= 1e3) return (v/1e3).toFixed(0) + 'K'
+  return v.toLocaleString('en-US', { maximumFractionDigits:0 })
+}
+
+function timeAgo(d) {
+  if (!d) return ''
+  const s = Math.floor((Date.now() - new Date(d)) / 1000)
+  if (s < 60) return 'just now'
+  if (s < 3600) return Math.floor(s/60) + 'm ago'
+  if (s < 86400) return Math.floor(s/3600) + 'h ago'
+  if (s < 604800) return Math.floor(s/86400) + 'd ago'
+  return new Date(d).toLocaleDateString('en-US', { month:'short', day:'numeric' })
+}
+
+function safeJson(str, fallback) {
+  try { return JSON.parse(str || '[]') } catch { return fallback }
+}
+
+function toast(msg, type = 'success') {
+  const colors = { success:'#34C759', error:'#FF3B30', warning:'#FF9500', info:'#007AFF' }
+  const el = document.createElement('div')
+  el.className = 'toast-msg'
+  el.style.background = colors[type] || colors.info
+  el.textContent = msg
+  document.getElementById('toast-container').appendChild(el)
+  setTimeout(() => { el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(), 300) }, 3000)
+}
+
+// ── AI EMAIL DRAFT ───────────────────────────────────
+const aiDraftState = { intent: '', dealId: null, contactId: null }
+
+function openAIDraft() {
+  // Pull current comm form context
+  aiDraftState.dealId    = document.getElementById('sel-comm-deal')?.value    || null
+  aiDraftState.contactId = document.getElementById('sel-comm-contact')?.value || null
+  // Reset intent UI
+  document.querySelectorAll('.ai-intent-btn').forEach(b => b.classList.remove('selected'))
+  document.getElementById('ai-custom-intent').value = ''
+  aiDraftState.intent = ''
+  showAIStep('intent')
+  openSheet('sh-ai-draft')
+}
+
+function selectIntent(text) {
+  aiDraftState.intent = text
+  document.querySelectorAll('.ai-intent-btn').forEach(b => b.classList.remove('selected'))
+  event.currentTarget.classList.add('selected')
+  document.getElementById('ai-custom-intent').value = ''
+}
+
+function showAIStep(step) {
+  document.getElementById('ai-step-intent').style.display = step === 'intent' ? 'block' : 'none'
+  document.getElementById('ai-step-draft').style.display  = step === 'draft'  ? 'block' : 'none'
+}
+
+async function runAIDraft() {
+  const custom = document.getElementById('ai-custom-intent').value.trim()
+  const intent = custom || aiDraftState.intent
+  if (!intent) { toast('Please select or describe what you want to say', 'warning'); return }
+
+  const tone = document.getElementById('ai-tone').value
+  const btn  = document.getElementById('ai-generate-btn')
+  btn.disabled = true
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating\u2026'
+
+  try {
+    const { data } = await axios.post(`${API}/ai/draft-email`, {
+      deal_id:    aiDraftState.dealId    || undefined,
+      contact_id: aiDraftState.contactId || undefined,
+      intent,
+      tone
     })
-    showToast(`Tracking added! Customer will be notified.`, 'success')
-    closeModal('modal-tracking')
-    loadPurchaseOrders()
-  } catch(e) { showToast('Error adding tracking', 'error') }
-}
 
-async function editPOStatus(id) {
-  const newStatus = prompt('New status: draft, quote_requested, quote_received, approved, submitted, confirmed, in_production, shipped, received, cancelled')
-  if (!newStatus) return
-  try {
-    await axios.put(`${API}/purchase-orders/${id}`, { status: newStatus })
-    showToast('PO status updated!', 'success')
-    loadPurchaseOrders()
-  } catch(e) { showToast('Error updating PO', 'error') }
-}
+    if (data.subject) document.getElementById('ai-draft-subject').value = data.subject
+    if (data.body)    document.getElementById('ai-draft-body').value    = data.body
 
-function openCreateEstimateModal(dealId) {
-  // Simple create estimate
-  const total = prompt('Enter estimate total amount ($):')
-  if (!total) return
-  const notes = prompt('Notes (optional):') || ''
-  axios.post(`${API}/estimates`, { deal_id: dealId, total: parseFloat(total), subtotal: parseFloat(total), notes }).then(({ data }) => {
-    showToast(`Estimate ${data.estimate.estimate_number} created!`, 'success')
-    if (state.currentDeal) openDealDetail(dealId)
-  })
-}
-
-function openCreateInvoiceModal(dealId) {
-  const total = prompt('Enter invoice total amount ($):')
-  if (!total) return
-  axios.post(`${API}/invoices`, { deal_id: dealId, total: parseFloat(total), subtotal: parseFloat(total) }).then(({ data }) => {
-    showToast(`Invoice ${data.invoice.invoice_number} created!`, 'success')
-    if (state.currentDeal) openDealDetail(dealId)
-  })
-}
-
-function showCreateEstimate() {
-  showPage('pipeline')
-}
-
-function showCreateInvoice() {
-  showPage('pipeline')
-}
-
-function showAddCompany() {
-  const name = prompt('Company name:')
-  if (!name) return
-  const type = prompt('Type (customer, prospect, supplier):') || 'customer'
-  axios.post(`${API}/companies`, { name, type }).then(() => {
-    showToast('Company added!', 'success')
-    loadCompanies()
-  })
-}
-
-function editCompany(id) {
-  showToast('Edit company - coming soon', 'info')
-}
-
-// ============================================================
-// NOTIFICATIONS
-// ============================================================
-async function markNotifRead(id) {
-  await axios.patch(`${API}/notifications/${id}/read`)
-  loadDashboard()
-}
-
-async function markAllNotifRead() {
-  await axios.patch(`${API}/notifications/mark-all-read`)
-  showToast('All notifications marked as read', 'success')
-  loadDashboard()
-}
-
-function updateNotifBadge(count) {
-  const badge = document.getElementById('notif-badge')
-  const dot = document.getElementById('header-notif-dot')
-  if (count > 0) {
-    badge.textContent = count
-    badge.classList.remove('hidden')
-    dot.classList.remove('hidden')
-  } else {
-    badge.classList.add('hidden')
-    dot.classList.add('hidden')
+    showAIStep('draft')
+    if (!data.ai) toast('Draft ready (smart template — add OPENAI_API_KEY for AI drafts)', 'info')
+  } catch(err) {
+    toast('Error generating draft', 'error')
+  } finally {
+    btn.disabled = false
+    btn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Generate Draft'
   }
 }
 
-function updateTasksBadge(count) {
-  const badge = document.getElementById('tasks-badge')
-  if (count > 0) {
-    badge.textContent = count
-    badge.classList.remove('hidden')
-  } else {
-    badge.classList.add('hidden')
-  }
-}
+async function useAIDraft(action) {
+  const subject = document.getElementById('ai-draft-subject').value.trim()
+  const body    = document.getElementById('ai-draft-body').value.trim()
 
-// ============================================================
-// SEARCH
-// ============================================================
-let searchTimeout = null
-function handleSearch(q) {
-  clearTimeout(searchTimeout)
-  const resultsEl = document.getElementById('search-results')
-  
-  if (!q || q.length < 2) { resultsEl.classList.add('hidden'); return }
-  
-  searchTimeout = setTimeout(async () => {
+  if (action === 'copy') {
     try {
-      const { data } = await axios.get(`${API}/search`, { params: { q } })
-      if (data.results.length) {
-        resultsEl.innerHTML = data.results.map(r => `
-          <div class="flex items-center gap-3 p-3 hover:bg-slate-50 cursor-pointer" onclick="handleSearchResult('${r.type}', ${r.id})">
-            <div class="w-7 h-7 rounded-full flex items-center justify-content-center text-xs font-semibold text-white" 
-              style="display:flex;align-items:center;justify-content:center;background:${r.type === 'contact' ? '#6366f1' : r.type === 'deal' ? '#22c55e' : '#f59e0b'}">
-              ${r.type[0].toUpperCase()}
-            </div>
-            <div>
-              <div class="text-sm font-medium">${r.title}</div>
-              <div class="text-xs text-slate-400">${r.type} · ${r.subtitle || ''}</div>
-            </div>
-          </div>
-        `).join('')
-        resultsEl.classList.remove('hidden')
-      } else {
-        resultsEl.innerHTML = '<div class="p-3 text-slate-400 text-sm">No results found</div>'
-        resultsEl.classList.remove('hidden')
-      }
-    } catch(e) {}
-  }, 300)
-}
-
-function handleSearchResult(type, id) {
-  document.getElementById('search-results').classList.add('hidden')
-  document.getElementById('global-search').value = ''
-  if (type === 'contact') { showPage('contacts'); setTimeout(() => openContactDetail(id), 300) }
-  else if (type === 'deal') { showPage('pipeline'); setTimeout(() => openDealDetail(id), 300) }
-  else if (type === 'company') { showPage('companies') }
-}
-
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('#global-search') && !e.target.closest('#search-results')) {
-    document.getElementById('search-results').classList.add('hidden')
+      await navigator.clipboard.writeText('Subject: ' + subject + '\n\n' + body)
+      toast('Copied to clipboard!', 'success')
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = 'Subject: ' + subject + '\n\n' + body
+      document.body.appendChild(ta); ta.select()
+      document.execCommand('copy'); document.body.removeChild(ta)
+      toast('Copied!', 'success')
+    }
+    return
   }
-})
 
-// ============================================================
-// HELPERS
-// ============================================================
-async function loadContactsForSelect(selectId) {
-  try {
-    const { data } = await axios.get(`${API}/contacts`, { params: { limit: 200 } })
-    const select = document.getElementById(selectId)
-    const current = select.value
-    select.innerHTML = '<option value="">Select Contact...</option>' + 
-      data.contacts.map(c => `<option value="${c.id}">${c.first_name} ${c.last_name}${c.company_name ? ' - ' + c.company_name : ''}</option>`).join('')
-    if (current) select.value = current
-  } catch(e) {}
+  if (action === 'mailapp') {
+    document.getElementById('comm-subject').value = subject
+    document.getElementById('comm-body').value    = body
+    closeSheet('sh-ai-draft')
+    setTimeout(() => _openMailAppNow(subject, body), 300)
+    return
+  }
+
+  if (action === 'send') {
+    document.getElementById('comm-subject').value = subject
+    document.getElementById('comm-body').value    = body
+    closeSheet('sh-ai-draft')
+    setTimeout(() => document.getElementById('comm-btn')?.click(), 300)
+    return
+  }
 }
 
-async function loadDealsForSelect(selectId) {
-  try {
-    const { data } = await axios.get(`${API}/deals`, { params: { limit: 200, status: 'active' } })
-    const select = document.getElementById(selectId)
-    const current = select.value
-    select.innerHTML = '<option value="">None</option>' + 
-      data.deals.map(d => `<option value="${d.id}">${d.title}</option>`).join('')
-    if (current) select.value = current
-  } catch(e) {}
+function openMailApp() {
+  const subject = document.getElementById('comm-subject')?.value || ''
+  const body    = document.getElementById('comm-body')?.value    || ''
+  _openMailAppNow(subject, body)
 }
 
-async function loadSuppliersForSelect(selectId) {
-  try {
-    const { data } = await axios.get(`${API}/suppliers`)
-    const select = document.getElementById(selectId)
-    select.innerHTML = '<option value="">Select Supplier...</option>' + 
-      data.suppliers.map(s => `<option value="${s.id}">${s.name}</option>`).join('')
-  } catch(e) {}
-}
+function _openMailAppNow(subject, body) {
+  const contactSel = document.getElementById('sel-comm-contact')
+  const contactId  = contactSel?.value
 
-function closeModal(id) {
-  document.getElementById(id)?.classList.remove('open')
-}
+  const go = (email) => {
+    const parts = []
+    if (subject) parts.push('subject=' + encodeURIComponent(subject))
+    if (body)    parts.push('body='    + encodeURIComponent(body))
+    const qs = parts.length ? '?' + parts.join('&') : ''
+    window.location.href = 'mailto:' + (email || '') + qs
 
-document.querySelectorAll('.modal').forEach(m => {
-  m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open') })
-})
-
-function showToast(message, type = 'success') {
-  const container = document.getElementById('toast-container')
-  const colors = { success: '#22c55e', error: '#ef4444', warning: '#f59e0b', info: '#6366f1' }
-  const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', warning: 'fa-exclamation-triangle', info: 'fa-info-circle' }
-  
-  const toast = document.createElement('div')
-  toast.className = 'toast-item'
-  toast.style.background = colors[type] || colors.info
-  toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> ${message}`
-  container.appendChild(toast)
-  
-  setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300) }, 4000)
-}
-
-function getTypeColor(type) {
-  const colors = { lead: '#6B7280', prospect: '#3B82F6', customer: '#22C55E', supplier: '#F59E0B' }
-  return colors[type] || '#6B7280'
-}
-
-function getNotifColor(type) {
-  const colors = { payment_received: 'bg-green-500', shipment_update: 'bg-blue-500', deal_update: 'bg-indigo-500', task_due: 'bg-orange-500', inbound_sms: 'bg-purple-500' }
-  return colors[type] || 'bg-slate-500'
-}
-
-function getActionIcon(action) {
-  const icons = { created: 'fa-plus', stage_changed: 'fa-arrow-right', email_logged: 'fa-envelope', call_logged: 'fa-phone', invoice_paid: 'fa-dollar-sign', sms_logged: 'fa-sms', note_logged: 'fa-sticky-note', updated: 'fa-edit' }
-  return icons[action] || 'fa-circle'
-}
-
-function timeAgo(dateStr) {
-  if (!dateStr) return ''
-  const date = new Date(dateStr)
-  const now = new Date()
-  const diff = Math.floor((now - date) / 1000)
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff/60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`
-  if (diff < 604800) return `${Math.floor(diff/86400)}d ago`
-  return date.toLocaleDateString()
-}
-
-function fmtNum(n) {
-  const num = parseFloat(n) || 0
-  if (num >= 1000000) return (num/1000000).toFixed(1) + 'M'
-  if (num >= 1000) return (num/1000).toFixed(0) + 'K'
-  return num.toFixed(0)
-}
-
-function showTaskActions(id) {
-  // Placeholder for task actions
-}
-
-async function loadDeals() {
-  if (state.currentPage === 'pipeline') loadPipeline()
-}
-
-// ============================================================
-// INITIALIZATION
-// ============================================================
-async function initApp() {
-  // Init DB if needed
-  try {
-    await axios.get(`${API}/dashboard`)
-  } catch (e) {
-    if (e.response?.status === 503) {
-      document.querySelector('main').innerHTML = `
-        <div class="flex items-center justify-center min-h-screen">
-          <div class="card text-center" style="max-width:500px">
-            <i class="fas fa-horse text-indigo-500 text-5xl mb-4"></i>
-            <h2 class="text-xl font-bold mb-2">Setting Up Database...</h2>
-            <p class="text-slate-500 mb-4">The database needs to be initialized. Please run migrations.</p>
-            <code class="block bg-slate-50 p-3 rounded text-sm text-left">
-              npx wrangler d1 migrations apply amberway-crm-production --local
-            </code>
-          </div>
-        </div>
-      `
-      return
+    // Log outbound silently
+    const dealId = document.getElementById('sel-comm-deal')?.value || aiDraftState.dealId || null
+    if (contactId || dealId) {
+      axios.post(`${API}/communications`, {
+        contact_id: contactId || null,
+        deal_id:    dealId,
+        type:       'email',
+        direction:  'outbound',
+        subject:    subject || '(no subject)',
+        body:       body    || '',
+        status:     'sent'
+      }).catch(() => {})
     }
   }
-  
-  loadDashboard()
-  
-  // Refresh dashboard every 5 minutes
-  setInterval(loadDashboard, 5 * 60 * 1000)
+
+  if (contactId) {
+    axios.get(`${API}/contacts/${contactId}`)
+      .then(r => go(r.data?.contact?.email || ''))
+      .catch(() => go(''))
+  } else {
+    go('')
+  }
 }
 
-// Start the app
-document.addEventListener('DOMContentLoaded', initApp)
+// ── INIT ─────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadHome()
+})

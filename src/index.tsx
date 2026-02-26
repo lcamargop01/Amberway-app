@@ -13,26 +13,20 @@ import apiRoutes from './routes/api'
 
 const app = new Hono<{ Bindings: Bindings }>()
 
-// CORS
 app.use('/api/*', cors({
   origin: '*',
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowHeaders: ['Content-Type', 'Authorization']
 }))
 
-// Static files
 app.use('/static/*', serveStatic({ root: './' }))
 
-// DB initialization middleware
 app.use('/api/*', async (c, next) => {
   const { DB } = c.env
-  if (!DB) {
-    return c.json({ error: 'Database not initialized. Run migrations first.' }, 503)
-  }
+  if (!DB) return c.json({ error: 'Database not initialized.' }, 503)
   await next()
 })
 
-// API Routes
 app.route('/api/contacts', contactsRoutes)
 app.route('/api/deals', dealsRoutes)
 app.route('/api/communications', communicationsRoutes)
@@ -40,763 +34,956 @@ app.route('/api/tasks', tasksRoutes)
 app.route('/api/purchase-orders', purchaseOrdersRoutes)
 app.route('/api', apiRoutes)
 
-// SPA - serve the main HTML app for all routes
-app.get('*', (c) => {
-  return c.html(getAppHTML())
-})
+app.get('*', (c) => c.html(HTML))
 
-function getAppHTML(): string {
-  return `<!DOCTYPE html>
+const HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Amberway Equine CRM</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: #f8fafc; }
-    .sidebar { width: 260px; min-height: 100vh; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); }
-    .sidebar-link { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 8px; color: #94a3b8; text-decoration: none; transition: all 0.2s; font-size: 14px; margin: 2px 8px; }
-    .sidebar-link:hover, .sidebar-link.active { background: rgba(99,102,241,0.2); color: #e2e8f0; }
-    .sidebar-link.active { background: rgba(99,102,241,0.3); color: #fff; border-left: 3px solid #6366f1; }
-    .sidebar-link i { width: 20px; text-align: center; }
-    .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font-size: 11px; font-weight: 600; }
-    .card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.07); border: 1px solid #f1f5f9; }
-    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; border: none; transition: all 0.2s; }
-    .btn-primary { background: #6366f1; color: white; }
-    .btn-primary:hover { background: #4f46e5; }
-    .btn-secondary { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
-    .btn-secondary:hover { background: #e2e8f0; }
-    .btn-success { background: #22c55e; color: white; }
-    .btn-danger { background: #ef4444; color: white; }
-    .btn-warning { background: #f59e0b; color: white; }
-    .btn-sm { padding: 5px 10px; font-size: 13px; }
-    .btn-xs { padding: 3px 8px; font-size: 12px; }
-    .input { width: 100%; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; outline: none; transition: border 0.2s; background: white; }
-    .input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
-    .select { width: 100%; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; outline: none; background: white; }
-    .label { display: block; font-size: 13px; font-weight: 500; color: #374151; margin-bottom: 4px; }
-    .modal { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; }
-    .modal.open { display: flex; }
-    .modal-box { background: white; border-radius: 16px; width: 90%; max-width: 600px; max-height: 90vh; overflow-y: auto; padding: 24px; }
-    .modal-box-lg { max-width: 900px; }
-    .tab-btn { padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; color: #6b7280; background: transparent; }
-    .tab-btn.active { background: #6366f1; color: white; }
-    .stage-badge { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 100px; font-size: 12px; font-weight: 500; }
-    .priority-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-    .kanban-col { min-width: 220px; max-width: 220px; }
-    .kanban-card { background: white; border-radius: 10px; padding: 12px; margin-bottom: 8px; cursor: pointer; border: 1px solid #f1f5f9; transition: box-shadow 0.2s; }
-    .kanban-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-    .timeline-item { position: relative; padding-left: 24px; padding-bottom: 16px; }
-    .timeline-item::before { content: ''; position: absolute; left: 8px; top: 8px; bottom: -8px; width: 2px; background: #e2e8f0; }
-    .timeline-item:last-child::before { display: none; }
-    .timeline-dot { position: absolute; left: 0; top: 4px; width: 16px; height: 16px; border-radius: 50%; background: #6366f1; border: 2px solid white; box-shadow: 0 0 0 2px #6366f1; }
-    .scrollbar-hide::-webkit-scrollbar { display: none; }
-    .page { display: none; }
-    .page.active { display: block; }
-    .notification-dot { width: 8px; height: 8px; background: #ef4444; border-radius: 50%; position: absolute; top: -2px; right: -2px; }
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: #f1f5f9; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-    .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: skeleton 1.5s infinite; border-radius: 6px; }
-    @keyframes skeleton { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-    .toast { position: fixed; bottom: 24px; right: 24px; z-index: 9999; }
-    .toast-item { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 10px; margin-top: 8px; color: white; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: slideIn 0.3s ease; }
-    @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-    .deal-value { font-size: 13px; color: #22c55e; font-weight: 600; }
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
-    .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 16px; }
-    @media (max-width: 768px) { .sidebar { display: none; } .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Amberway CRM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css">
+<style>
+/* ── RESET & BASE ─────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  background: #F2F2F7;
+  color: #1C1C1E;
+  height: 100%;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── LAYOUT ───────────────────────────────────── */
+.app-wrap { max-width: 430px; margin: 0 auto; position: relative; min-height: 100dvh; background: #F2F2F7; }
+
+/* ── PAGES ────────────────────────────────────── */
+.page { display: none; flex-direction: column; min-height: 100dvh; padding-bottom: 84px; }
+.page.active { display: flex; }
+
+/* ── NAV BAR ──────────────────────────────────── */
+.nav {
+  position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+  width: 100%; max-width: 430px;
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-top: 0.5px solid rgba(0,0,0,0.12);
+  display: flex; z-index: 100;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.nav-item {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  padding: 10px 4px 8px; border: none; background: none; cursor: pointer;
+  color: #8E8E93; font-size: 10px; font-weight: 500; gap: 3px;
+  letter-spacing: 0.01em; transition: color 0.15s;
+}
+.nav-item i { font-size: 21px; line-height: 1; }
+.nav-item.active { color: #007AFF; }
+.nav-item.active i { color: #007AFF; }
+.nav-badge {
+  position: absolute; top: 7px; right: calc(50% - 18px);
+  min-width: 16px; height: 16px; background: #FF3B30;
+  border-radius: 8px; border: 2px solid rgba(255,255,255,0.9);
+  font-size: 9px; font-weight: 700; color: #fff;
+  display: none; align-items: center; justify-content: center; padding: 0 3px;
+}
+.nav-badge.show { display: flex; }
+
+/* ── PAGE HEADER ──────────────────────────────── */
+.page-header {
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 0.5px solid rgba(0,0,0,0.1);
+  padding: 16px 16px 14px;
+  position: sticky; top: 0; z-index: 50;
+}
+.page-title { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; color: #1C1C1E; }
+.page-subtitle { font-size: 13px; color: #8E8E93; margin-top: 1px; }
+
+/* ── SECTION HEADER ───────────────────────────── */
+.section-head {
+  font-size: 11px; font-weight: 600; color: #8E8E93;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 20px 16px 8px;
+}
+
+/* ── KPI STRIP ────────────────────────────────── */
+.kpi-strip {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 10px; padding: 14px 16px;
+}
+.kpi-card {
+  background: #fff; border-radius: 14px;
+  padding: 14px 12px; text-align: center;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.05);
+}
+.kpi-value { font-size: 26px; font-weight: 700; line-height: 1; letter-spacing: -0.5px; }
+.kpi-label { font-size: 11px; color: #8E8E93; margin-top: 4px; font-weight: 500; }
+
+/* ── INSET LIST (grouped cards) ───────────────── */
+.inset-list {
+  background: #fff; border-radius: 14px;
+  margin: 0 16px; overflow: hidden;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.05);
+}
+.inset-list .list-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 13px 16px;
+  border-bottom: 0.5px solid #E5E5EA;
+  cursor: pointer; transition: background 0.1s;
+  text-decoration: none; color: inherit;
+}
+.inset-list .list-row:last-child { border-bottom: none; }
+.inset-list .list-row:active { background: #F2F2F7; }
+
+/* ── ICON CIRCLE ──────────────────────────────── */
+.icon-circle {
+  width: 42px; height: 42px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; flex-shrink: 0;
+}
+
+/* ── ROW TEXT ─────────────────────────────────── */
+.row-main { font-size: 15px; font-weight: 600; color: #1C1C1E; line-height: 1.3; }
+.row-sub  { font-size: 13px; color: #8E8E93; margin-top: 2px; }
+.row-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+.row-value { font-size: 15px; font-weight: 600; color: #34C759; }
+.row-chevron { color: #C7C7CC; font-size: 12px; }
+
+/* ── DEAL CARD ────────────────────────────────── */
+.deal-card {
+  background: #fff; border-radius: 16px;
+  margin: 0 16px 10px; padding: 16px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.05), 0 2px 8px rgba(0,0,0,0.04);
+  cursor: pointer; border-left: 4px solid #E5E5EA;
+  transition: transform 0.1s;
+  -webkit-user-select: none; user-select: none;
+}
+.deal-card:active { transform: scale(0.985); }
+.deal-title { font-size: 16px; font-weight: 700; color: #1C1C1E; line-height: 1.3; }
+.deal-contact { font-size: 13px; color: #8E8E93; margin-top: 4px; }
+.deal-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; flex-wrap: wrap; gap: 6px; }
+.deal-value { font-size: 17px; font-weight: 700; color: #34C759; }
+
+/* ── STAGE BADGE ──────────────────────────────── */
+.stage-tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 8px;
+  font-size: 12px; font-weight: 600;
+}
+
+/* ── NEXT ACTION ──────────────────────────────── */
+.next-action {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 600;
+}
+
+/* ── ACTION NEEDED CARD ───────────────────────── */
+.action-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; cursor: pointer; transition: background 0.1s;
+  border-bottom: 0.5px solid #E5E5EA;
+}
+.action-card:last-child { border-bottom: none; }
+.action-card:active { background: #F9F9F9; }
+
+/* ── TASK ROW ─────────────────────────────────── */
+.task-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 13px 16px; cursor: pointer; transition: background 0.1s;
+  border-bottom: 0.5px solid #E5E5EA;
+}
+.task-row:last-child { border-bottom: none; }
+.task-row:active { background: #F2F2F7; }
+.task-check {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 2px solid #C7C7CC; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all 0.15s;
+}
+.task-check.done { background: #34C759; border-color: #34C759; }
+
+/* ── CONTACT ROW ──────────────────────────────── */
+.contact-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 16px; cursor: pointer; transition: background 0.1s;
+  border-bottom: 0.5px solid #E5E5EA;
+}
+.contact-row:last-child { border-bottom: none; }
+.contact-row:active { background: #F2F2F7; }
+.avatar {
+  width: 44px; height: 44px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 16px; flex-shrink: 0;
+}
+
+/* ── PO CARD ──────────────────────────────────── */
+.po-card {
+  background: #fff; border-radius: 16px;
+  margin: 0 16px 10px; padding: 16px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.05), 0 2px 8px rgba(0,0,0,0.04);
+  cursor: pointer; border-left: 4px solid #E5E5EA;
+  transition: transform 0.1s;
+}
+.po-card:active { transform: scale(0.985); }
+
+/* ── BOTTOM SHEET ─────────────────────────────── */
+.sheet-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 200; display: none;
+}
+.sheet-backdrop.open { display: block; }
+.sheet {
+  position: fixed; bottom: 0; left: 50%; 
+  transform: translateX(-50%) translateY(100%);
+  width: 100%; max-width: 430px;
+  background: #fff; border-radius: 20px 20px 0 0;
+  z-index: 201; max-height: 92dvh; overflow-y: auto;
+  transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 16px);
+}
+.sheet.open { transform: translateX(-50%) translateY(0); }
+.sheet-pill {
+  width: 36px; height: 4px; background: #D1D1D6;
+  border-radius: 2px; margin: 12px auto 0; display: block;
+}
+.sheet-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px 0;
+}
+.sheet-title { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+.sheet-close {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: #E5E5EA; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; color: #636366; flex-shrink: 0;
+}
+.sheet-body { padding: 16px 20px 8px; }
+
+/* ── FORM FIELDS ──────────────────────────────── */
+.form-group { margin-bottom: 14px; }
+.form-label {
+  display: block; font-size: 12px; font-weight: 600;
+  color: #8E8E93; letter-spacing: 0.04em; text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.form-input {
+  width: 100%; padding: 13px 14px;
+  border: 1.5px solid #E5E5EA; border-radius: 12px;
+  font-size: 16px; color: #1C1C1E; background: #F9F9F9;
+  outline: none; -webkit-appearance: none;
+  font-family: inherit; transition: border-color 0.15s, background 0.15s;
+}
+.form-input:focus { border-color: #007AFF; background: #fff; }
+.form-input::placeholder { color: #C7C7CC; }
+
+/* ── BUTTONS ──────────────────────────────────── */
+.btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; padding: 15px 20px; border-radius: 14px;
+  font-size: 16px; font-weight: 600; border: none; cursor: pointer;
+  font-family: inherit; letter-spacing: -0.1px; transition: opacity 0.1s, transform 0.1s;
+}
+.btn:active { transform: scale(0.97); opacity: 0.85; }
+.btn-primary  { background: #007AFF; color: #fff; }
+.btn-green    { background: #34C759; color: #fff; }
+.btn-orange   { background: #FF9500; color: #fff; }
+.btn-red-soft { background: #FFF2F0; color: #FF3B30; border: 1px solid #FFCCC7; }
+.btn-gray     { background: #F2F2F7; color: #1C1C1E; }
+.btn-purple   { background: #5856D6; color: #fff; }
+.btn-teal     { background: #5AC8FA; color: #fff; }
+
+/* ── CONTACT ACTION BTNS ──────────────────────── */
+.contact-actions { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
+.contact-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 14px 8px; border-radius: 14px; text-decoration: none;
+  border: none; cursor: pointer; font-family: inherit; transition: opacity 0.1s, transform 0.1s;
+}
+.contact-btn:active { transform: scale(0.94); opacity: 0.75; }
+.contact-btn i { font-size: 22px; }
+.contact-btn span { font-size: 12px; font-weight: 600; }
+
+/* ── STAGE PILL ───────────────────────────────── */
+.stage-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 0 0 4px; }
+.stage-scroll::-webkit-scrollbar { display: none; }
+.stage-pills { display: flex; gap: 7px; width: max-content; }
+.s-pill {
+  padding: 7px 14px; border-radius: 100px;
+  border: 1.5px solid #E5E5EA; background: #fff;
+  font-size: 13px; font-weight: 600; white-space: nowrap;
+  cursor: pointer; color: #636366; transition: all 0.15s;
+}
+.s-pill.active { border-width: 1.5px; }
+
+/* ── SEGMENT ──────────────────────────────────── */
+.segment { display: flex; background: #E5E5EA; border-radius: 10px; padding: 2px; gap: 2px; }
+.seg-btn {
+  flex: 1; padding: 7px 10px; border-radius: 8px;
+  border: none; background: none; font-size: 14px;
+  font-weight: 500; color: #636366; cursor: pointer;
+  font-family: inherit; transition: all 0.15s;
+}
+.seg-btn.active { background: #fff; color: #1C1C1E; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+
+/* ── COMM TABS ────────────────────────────────── */
+.comm-tabs { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
+.comm-tab {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 10px 4px; border-radius: 12px;
+  border: 1.5px solid #E5E5EA; background: #F9F9F9;
+  cursor: pointer; font-family: inherit; transition: all 0.15s;
+}
+.comm-tab i { font-size: 18px; color: #8E8E93; }
+.comm-tab span { font-size: 11px; font-weight: 600; color: #8E8E93; }
+.comm-tab.active { background: #EEF4FF; border-color: #007AFF; }
+.comm-tab.active i, .comm-tab.active span { color: #007AFF; }
+
+/* ── EMPTY STATE ──────────────────────────────── */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 60px 24px; gap: 12px; text-align: center;
+}
+.empty-state i { font-size: 48px; color: #D1D1D6; }
+.empty-state p { font-size: 15px; color: #8E8E93; line-height: 1.5; }
+
+/* ── ALL GOOD BANNER ──────────────────────────── */
+.all-good {
+  display: flex; align-items: center; gap: 14px;
+  background: #F0FDF4; border-radius: 14px;
+  padding: 16px; margin: 0 16px;
+  border: 1px solid #BBF7D0;
+}
+
+/* ── SPINNER ──────────────────────────────────── */
+.loading { display: flex; justify-content: center; padding: 40px; color: #C7C7CC; font-size: 24px; }
+
+/* ── URGENT BANNER ────────────────────────────── */
+.urgent-badge {
+  background: #FFF1F0; color: #FF3B30;
+  font-size: 10px; font-weight: 700;
+  padding: 2px 8px; border-radius: 6px;
+  letter-spacing: 0.05em;
+}
+
+/* ── NEXT STEP BANNER ─────────────────────────── */
+.next-banner {
+  border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;
+}
+
+/* ── INFO ROWS ────────────────────────────────── */
+.info-block { background: #F9F9F9; border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
+.info-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-bottom: 0.5px solid #E5E5EA;
+}
+.info-row:last-child { border-bottom: none; }
+.info-row i { width: 20px; text-align: center; color: #8E8E93; font-size: 14px; flex-shrink: 0; }
+.info-row span { font-size: 14px; color: #3C3C43; }
+
+/* ── MINI TASK LIST ───────────────────────────── */
+.mini-task {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-bottom: 0.5px solid #E5E5EA;
+}
+.mini-task:last-child { border-bottom: none; }
+.mini-check {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid #C7C7CC; flex-shrink: 0;
+  cursor: pointer; transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ── TOAST ────────────────────────────────────── */
+#toast-container {
+  position: fixed; top: max(env(safe-area-inset-top,0px),60px);
+  left: 50%; transform: translateX(-50%);
+  width: calc(100% - 32px); max-width: 398px;
+  z-index: 999; pointer-events: none;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.toast-msg {
+  padding: 14px 18px; border-radius: 14px;
+  font-size: 14px; font-weight: 600; color: #fff;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+  animation: toastIn 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes toastIn {
+  from { transform: translateY(-16px) scale(0.95); opacity: 0; }
+  to   { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+/* ── QUICK ADD GRID ───────────────────────────── */
+.add-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.add-tile {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  padding: 18px 16px; border-radius: 16px; border: none;
+  cursor: pointer; font-family: inherit; transition: transform 0.1s, opacity 0.1s;
+  text-align: left;
+}
+.add-tile:active { transform: scale(0.96); opacity: 0.85; }
+.add-tile i { font-size: 24px; }
+.add-tile-label { font-size: 15px; font-weight: 600; }
+.add-tile-sub { font-size: 12px; opacity: 0.7; }
+
+/* ── DIVIDER ──────────────────────────────────── */
+.spacer { height: 8px; background: #F2F2F7; }
+
+/* ── SEARCH ───────────────────────────────────── */
+.search-wrap {
+  position: relative; margin-top: 10px;
+}
+.search-wrap i {
+  position: absolute; left: 12px; top: 50%;
+  transform: translateY(-50%); color: #8E8E93; font-size: 14px;
+}
+.search-input {
+  width: 100%; padding: 11px 12px 11px 36px;
+  background: rgba(118,118,128,0.12); border: none; border-radius: 12px;
+  font-size: 15px; color: #1C1C1E; outline: none;
+  font-family: inherit;
+}
+.search-input::placeholder { color: #8E8E93; }
+
+/* ── PRIORITY DOT ─────────────────────────────── */
+.p-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── AI COMPOSER ──────────────────────────────── */
+.ai-intent-btn {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  padding: 12px 14px; border-radius: 12px; border: 1.5px solid #E5E5EA;
+  background: #F9F9F9; cursor: pointer; font-family: inherit;
+  text-align: left; width: 100%; transition: all 0.15s;
+}
+.ai-intent-btn:active { transform: scale(0.97); opacity: 0.85; }
+.ai-intent-btn.selected { border-color: #5856D6; background: #F5F3FF; }
+.ai-intent-btn i { font-size: 18px; }
+.ai-intent-btn .label { font-size: 14px; font-weight: 600; }
+.ai-intent-btn .sub   { font-size: 12px; color: #8E8E93; }
+
+.ai-draft-area {
+  position: relative; margin-bottom: 14px;
+}
+.ai-draft-area textarea {
+  width: 100%; padding: 13px 14px 44px;
+  border: 1.5px solid #5856D6; border-radius: 12px;
+  font-size: 14px; color: #1C1C1E; background: #F5F3FF;
+  outline: none; font-family: inherit; resize: vertical; min-height: 140px;
+  line-height: 1.6;
+}
+.ai-draft-footer {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px;
+  background: linear-gradient(transparent, #F5F3FF 60%);
+  border-radius: 0 0 12px 12px;
+  pointer-events: none;
+}
+.ai-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: #5856D6; color: #fff;
+  font-size: 11px; font-weight: 700; padding: 3px 9px;
+  border-radius: 100px; letter-spacing: 0.03em;
+  pointer-events: auto;
+}
+
+/* ── EMAIL THREAD VIEWER ──────────────────────── */
+.thread-bubble {
+  padding: 12px 16px; border-radius: 14px; margin-bottom: 10px;
+  font-size: 14px; line-height: 1.6; color: #1C1C1E;
+}
+.thread-bubble.outbound { background: #EEF4FF; margin-left: 12px; }
+.thread-bubble.inbound  { background: #F2F2F7; margin-right: 12px; }
+.thread-meta {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px; font-size: 12px;
+}
+.thread-from { font-weight: 700; color: #3C3C43; }
+.thread-time { color: #8E8E93; }
+.thread-subj { font-size: 11px; color: #8E8E93; margin-bottom: 4px; }
+</style>
 </head>
-<body class="flex">
+<body>
+<div class="app-wrap">
 
-<!-- SIDEBAR -->
-<nav class="sidebar flex flex-col py-4 flex-shrink-0">
-  <div class="px-5 mb-6">
-    <div class="flex items-center gap-3">
-      <div style="width:36px;height:36px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:10px;display:flex;align-items:center;justify-content:center">
-        <i class="fas fa-horse text-white text-sm"></i>
-      </div>
+<!-- ─────────────────────────────────────────────
+     TOAST CONTAINER
+───────────────────────────────────────────── -->
+<div id="toast-container"></div>
+
+<!-- ═════════════════════════════════════════════
+     PAGE: TODAY
+═════════════════════════════════════════════ -->
+<div class="page active" id="page-home">
+  <div class="page-header">
+    <div style="display:flex;align-items:center;justify-content:space-between">
       <div>
-        <div class="text-white font-bold text-sm leading-tight">Amberway Equine</div>
-        <div class="text-slate-400 text-xs">CRM System</div>
+        <div id="hdr-date" style="font-size:13px;color:#8E8E93;font-weight:500"></div>
+        <div id="hdr-greet" class="page-title">Today</div>
       </div>
+      <button onclick="openSheet('sh-quickadd')" style="width:36px;height:36px;background:#007AFF;border-radius:50%;border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">
+        <i class="fas fa-plus"></i>
+      </button>
     </div>
   </div>
 
-  <div class="px-3 mb-2">
-    <div class="text-slate-500 text-xs font-semibold uppercase tracking-wider px-3 mb-1">Main</div>
-  </div>
-  <a href="#" class="sidebar-link active" onclick="showPage('dashboard')">
-    <i class="fas fa-chart-line"></i> Dashboard
-    <span id="notif-badge" class="badge bg-red-500 text-white ml-auto hidden">0</span>
-  </a>
-  <a href="#" class="sidebar-link" onclick="showPage('pipeline')">
-    <i class="fas fa-columns"></i> Pipeline
-  </a>
-  <a href="#" class="sidebar-link" onclick="showPage('contacts')">
-    <i class="fas fa-users"></i> Contacts
-  </a>
-  <a href="#" class="sidebar-link" onclick="showPage('companies')">
-    <i class="fas fa-building"></i> Companies
-  </a>
-
-  <div class="px-3 mt-4 mb-2">
-    <div class="text-slate-500 text-xs font-semibold uppercase tracking-wider px-3 mb-1">Finance</div>
-  </div>
-  <a href="#" class="sidebar-link" onclick="showPage('estimates')">
-    <i class="fas fa-file-invoice"></i> Estimates
-  </a>
-  <a href="#" class="sidebar-link" onclick="showPage('invoices')">
-    <i class="fas fa-dollar-sign"></i> Invoices
-  </a>
-
-  <div class="px-3 mt-4 mb-2">
-    <div class="text-slate-500 text-xs font-semibold uppercase tracking-wider px-3 mb-1">Orders</div>
-  </div>
-  <a href="#" class="sidebar-link" onclick="showPage('purchase-orders')">
-    <i class="fas fa-shopping-cart"></i> Purchase Orders
-  </a>
-  <a href="#" class="sidebar-link" onclick="showPage('shipments')">
-    <i class="fas fa-truck"></i> Shipments
-  </a>
-
-  <div class="px-3 mt-4 mb-2">
-    <div class="text-slate-500 text-xs font-semibold uppercase tracking-wider px-3 mb-1">Productivity</div>
-  </div>
-  <a href="#" class="sidebar-link" onclick="showPage('tasks')">
-    <i class="fas fa-tasks"></i> Tasks
-    <span id="tasks-badge" class="badge bg-orange-500 text-white ml-auto hidden">0</span>
-  </a>
-  <a href="#" class="sidebar-link" onclick="showPage('communications')">
-    <i class="fas fa-comments"></i> Communications
-  </a>
-
-  <div class="mt-auto">
-    <div class="px-3 mb-2">
-      <div class="text-slate-500 text-xs font-semibold uppercase tracking-wider px-3 mb-1">System</div>
+  <!-- KPI Strip -->
+  <div class="kpi-strip" id="home-kpis">
+    <div class="kpi-card">
+      <div class="kpi-value" id="k-deals" style="color:#007AFF">—</div>
+      <div class="kpi-label">Deals</div>
     </div>
-    <a href="#" class="sidebar-link" onclick="showPage('settings')">
-      <i class="fas fa-cog"></i> Settings
-    </a>
+    <div class="kpi-card">
+      <div class="kpi-value" id="k-tasks" style="color:#FF9500">—</div>
+      <div class="kpi-label">Due Today</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value" id="k-pipe" style="color:#34C759">—</div>
+      <div class="kpi-label">Pipeline</div>
+    </div>
   </div>
+
+  <!-- Action Needed -->
+  <div class="section-head">Action Needed</div>
+  <div id="home-actions">
+    <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
+  </div>
+
+  <div class="spacer" style="margin-top:12px"></div>
+
+  <!-- Active Deals -->
+  <div class="section-head">Active Deals</div>
+  <div id="home-deals">
+    <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
+  </div>
+  <div style="height:20px"></div>
+</div>
+
+<!-- ═════════════════════════════════════════════
+     PAGE: PIPELINE
+═════════════════════════════════════════════ -->
+<div class="page" id="page-deals">
+  <div class="page-header">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div class="page-title">Pipeline</div>
+    </div>
+    <div class="segment" id="deals-seg">
+      <button class="seg-btn active" onclick="filterDeals('active',this)">Active</button>
+      <button class="seg-btn" onclick="filterDeals('won',this)">Won</button>
+      <button class="seg-btn" onclick="filterDeals('lost',this)">Lost</button>
+    </div>
+  </div>
+  <div id="deals-list">
+    <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
+  </div>
+  <div style="height:20px"></div>
+</div>
+
+<!-- ═════════════════════════════════════════════
+     PAGE: CONTACTS
+═════════════════════════════════════════════ -->
+<div class="page" id="page-contacts">
+  <div class="page-header">
+    <div class="page-title" style="margin-bottom:10px">Contacts</div>
+    <div class="search-wrap">
+      <i class="fas fa-magnifying-glass"></i>
+      <input type="search" class="search-input" placeholder="Search name, company…" id="csearch" oninput="debounceSearch(this.value)">
+    </div>
+  </div>
+  <div id="contacts-list">
+    <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
+  </div>
+  <div style="height:20px"></div>
+</div>
+
+<!-- ═════════════════════════════════════════════
+     PAGE: ORDERS
+═════════════════════════════════════════════ -->
+<div class="page" id="page-orders">
+  <div class="page-header">
+    <div class="page-title">Orders</div>
+    <div class="page-subtitle" id="orders-subtitle">Purchase orders & shipments</div>
+  </div>
+  <div id="orders-list">
+    <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
+  </div>
+  <div style="height:20px"></div>
+</div>
+
+<!-- ═════════════════════════════════════════════
+     PAGE: TASKS
+═════════════════════════════════════════════ -->
+<div class="page" id="page-tasks">
+  <div class="page-header">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div class="page-title">Tasks</div>
+      <button onclick="openAddTask()" style="padding:8px 14px;background:#007AFF;color:#fff;border-radius:10px;border:none;font-size:14px;font-weight:600;cursor:pointer">+ Add</button>
+    </div>
+    <div class="segment" id="tasks-seg">
+      <button class="seg-btn active" onclick="filterTasks('pending',this)">Pending</button>
+      <button class="seg-btn" onclick="filterTasks('done',this)">Completed</button>
+    </div>
+  </div>
+  <div id="tasks-list">
+    <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
+  </div>
+  <div style="height:20px"></div>
+</div>
+
+<!-- ─────────────────────────────────────────────
+     BOTTOM NAV
+───────────────────────────────────────────── -->
+<nav class="nav">
+  <button class="nav-item active" id="ni-home" onclick="navTo('home')">
+    <i class="fas fa-house"></i><span>Today</span>
+  </button>
+  <button class="nav-item" id="ni-deals" onclick="navTo('deals')">
+    <i class="fas fa-layer-group"></i><span>Pipeline</span>
+  </button>
+  <button class="nav-item" id="ni-contacts" onclick="navTo('contacts')">
+    <i class="fas fa-person"></i><span>Contacts</span>
+  </button>
+  <button class="nav-item" id="ni-orders" onclick="navTo('orders')">
+    <i class="fas fa-box"></i><span>Orders</span>
+  </button>
+  <button class="nav-item" id="ni-tasks" onclick="navTo('tasks')" style="position:relative">
+    <i class="fas fa-circle-check"></i><span>Tasks</span>
+    <span class="nav-badge" id="task-badge">0</span>
+  </button>
 </nav>
 
-<!-- MAIN CONTENT -->
-<main class="flex-1 flex flex-col min-h-screen" style="max-width:calc(100vw - 260px)">
-  <!-- TOP BAR -->
-  <header class="bg-white border-b border-slate-100 px-6 py-3 flex items-center justify-between sticky top-0 z-50">
-    <div class="flex items-center gap-3 flex-1">
-      <div class="relative flex-1 max-w-md">
-        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
-        <input type="text" id="global-search" placeholder="Search contacts, deals, companies..." 
-          class="input pl-9" style="padding-left:36px" oninput="handleSearch(this.value)">
-        <div id="search-results" class="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-lg mt-1 shadow-lg hidden z-50 max-h-80 overflow-y-auto"></div>
-      </div>
-    </div>
-    <div class="flex items-center gap-3">
-      <button class="btn btn-primary btn-sm" onclick="showQuickAdd()">
-        <i class="fas fa-plus"></i> Quick Add
-      </button>
-      <button class="relative btn btn-secondary btn-sm" onclick="showPage('tasks')">
-        <i class="fas fa-bell"></i>
-        <span id="header-notif-dot" class="notification-dot hidden"></span>
-      </button>
-      <div class="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-semibold text-sm">AE</div>
-    </div>
-  </header>
+<!-- ═══════════════════════════════════════════════════
+     SHEETS
+═══════════════════════════════════════════════════ -->
 
-  <!-- PAGES CONTAINER -->
-  <div class="flex-1 overflow-y-auto p-6">
+<!-- Deal Detail -->
+<div class="sheet-backdrop" id="bd-deal" onclick="closeSheet('sh-deal')"></div>
+<div class="sheet" id="sh-deal">
+  <span class="sheet-pill"></span>
+  <div id="sh-deal-body"></div>
+</div>
 
-    <!-- DASHBOARD PAGE -->
-    <div id="page-dashboard" class="page active">
-      <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-bold text-slate-800">Dashboard</h1>
-        <div class="flex gap-2">
-          <button class="btn btn-secondary btn-sm" onclick="syncGmail()">
-            <i class="fab fa-google"></i> Sync Gmail
-          </button>
-          <button class="btn btn-primary btn-sm" onclick="showAddDeal()">
-            <i class="fas fa-plus"></i> New Deal
-          </button>
-        </div>
-      </div>
+<!-- Contact Detail -->
+<div class="sheet-backdrop" id="bd-contact" onclick="closeSheet('sh-contact')"></div>
+<div class="sheet" id="sh-contact">
+  <span class="sheet-pill"></span>
+  <div id="sh-contact-body"></div>
+</div>
 
-      <!-- KPI Cards -->
-      <div id="kpi-cards" class="grid-4 mb-6">
-        <div class="skeleton h-24"></div>
-        <div class="skeleton h-24"></div>
-        <div class="skeleton h-24"></div>
-        <div class="skeleton h-24"></div>
-      </div>
+<!-- Generic Panel (tasks, POs) -->
+<div class="sheet-backdrop" id="bd-panel" onclick="closeSheet('sh-panel')"></div>
+<div class="sheet" id="sh-panel">
+  <span class="sheet-pill"></span>
+  <div id="sh-panel-body"></div>
+</div>
 
-      <div class="grid gap-6" style="grid-template-columns:1fr 1fr">
-        <!-- Pipeline overview -->
-        <div class="card">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-slate-700">Pipeline by Stage</h3>
-            <button class="btn btn-secondary btn-xs" onclick="showPage('pipeline')">View All</button>
-          </div>
-          <canvas id="pipelineChart" height="180"></canvas>
-        </div>
-
-        <!-- Revenue Trend -->
-        <div class="card">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-slate-700">Revenue Trend</h3>
-          </div>
-          <canvas id="revenueChart" height="180"></canvas>
-        </div>
-      </div>
-
-      <div class="grid gap-6 mt-6" style="grid-template-columns:1fr 1fr">
-        <!-- Tasks due today + overdue -->
-        <div class="card">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-slate-700 flex items-center gap-2">
-              <i class="fas fa-exclamation-triangle text-orange-500"></i> Tasks Needing Attention
-            </h3>
-            <button class="btn btn-secondary btn-xs" onclick="showPage('tasks')">All Tasks</button>
-          </div>
-          <div id="dash-tasks"></div>
-        </div>
-
-        <!-- Recent Activity -->
-        <div class="card">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-slate-700">Recent Activity</h3>
-          </div>
-          <div id="dash-activity" class="space-y-2 max-h-80 overflow-y-auto"></div>
-        </div>
-      </div>
-
-      <div class="grid gap-6 mt-6" style="grid-template-columns:1fr 1fr">
-        <!-- Active POs -->
-        <div class="card">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-slate-700 flex items-center gap-2">
-              <i class="fas fa-shopping-cart text-blue-500"></i> Active Orders
-            </h3>
-            <button class="btn btn-secondary btn-xs" onclick="showPage('purchase-orders')">All POs</button>
-          </div>
-          <div id="dash-pos"></div>
-        </div>
-
-        <!-- Notifications -->
-        <div class="card">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-slate-700 flex items-center gap-2">
-              <i class="fas fa-bell text-indigo-500"></i> Notifications
-            </h3>
-            <button class="btn btn-xs btn-secondary" onclick="markAllNotifRead()">Mark All Read</button>
-          </div>
-          <div id="dash-notifications" class="space-y-2 max-h-80 overflow-y-auto"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- PIPELINE PAGE -->
-    <div id="page-pipeline" class="page">
-      <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-bold text-slate-800">Pipeline</h1>
-        <div class="flex gap-2">
-          <button class="btn btn-secondary btn-sm" onclick="loadDeals()"><i class="fas fa-sync"></i></button>
-          <button class="btn btn-primary btn-sm" onclick="showAddDeal()"><i class="fas fa-plus"></i> New Deal</button>
-        </div>
-      </div>
-      <div id="pipeline-kanban" class="flex gap-4 overflow-x-auto pb-4 scrollbar-hide" style="min-height:500px"></div>
-    </div>
-
-    <!-- CONTACTS PAGE -->
-    <div id="page-contacts" class="page">
-      <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-bold text-slate-800">Contacts</h1>
-        <button class="btn btn-primary btn-sm" onclick="showAddContact()"><i class="fas fa-plus"></i> Add Contact</button>
-      </div>
-      <div class="card mb-4">
-        <div class="flex gap-3">
-          <input type="text" id="contact-search" placeholder="Search contacts..." class="input" oninput="filterContacts(this.value)">
-          <select class="select" style="width:150px" onchange="filterContactsByType(this.value)">
-            <option value="">All Types</option>
-            <option value="lead">Leads</option>
-            <option value="customer">Customers</option>
-            <option value="prospect">Prospects</option>
-          </select>
-        </div>
-      </div>
-      <div id="contacts-list"></div>
-    </div>
-
-    <!-- COMPANIES PAGE -->
-    <div id="page-companies" class="page">
-      <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-bold text-slate-800">Companies</h1>
-        <button class="btn btn-primary btn-sm" onclick="showAddCompany()"><i class="fas fa-plus"></i> Add Company</button>
-      </div>
-      <div id="companies-list"></div>
-    </div>
-
-    <!-- ESTIMATES PAGE -->
-    <div id="page-estimates" class="page">
-      <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-bold text-slate-800">Estimates</h1>
-        <button class="btn btn-primary btn-sm" onclick="showCreateEstimate()"><i class="fas fa-plus"></i> Create Estimate</button>
-      </div>
-      <div id="estimates-list"></div>
-    </div>
-
-    <!-- INVOICES PAGE -->
-    <div id="page-invoices" class="page">
-      <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-bold text-slate-800">Invoices</h1>
-        <button class="btn btn-primary btn-sm" onclick="showCreateInvoice()"><i class="fas fa-plus"></i> Create Invoice</button>
-      </div>
-      <div id="invoices-list"></div>
-    </div>
-
-    <!-- PURCHASE ORDERS PAGE -->
-    <div id="page-purchase-orders" class="page">
-      <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-bold text-slate-800">Purchase Orders</h1>
-        <button class="btn btn-primary btn-sm" onclick="showCreatePO()"><i class="fas fa-plus"></i> New PO</button>
-      </div>
-      <div id="po-list"></div>
-    </div>
-
-    <!-- SHIPMENTS PAGE -->
-    <div id="page-shipments" class="page">
-      <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-bold text-slate-800">Shipments & Tracking</h1>
-      </div>
-      <div id="shipments-list"></div>
-    </div>
-
-    <!-- TASKS PAGE -->
-    <div id="page-tasks" class="page">
-      <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-bold text-slate-800">Tasks & Reminders</h1>
-        <button class="btn btn-primary btn-sm" onclick="showAddTask()"><i class="fas fa-plus"></i> Add Task</button>
-      </div>
-      <div class="flex gap-2 mb-4">
-        <button class="tab-btn active" onclick="filterTasks('pending', this)">Pending</button>
-        <button class="tab-btn" onclick="filterTasks('in_progress', this)">In Progress</button>
-        <button class="tab-btn" onclick="filterTasks('completed', this)">Completed</button>
-        <button class="tab-btn" onclick="filterTasks('all', this)">All</button>
-      </div>
-      <div id="tasks-list"></div>
-    </div>
-
-    <!-- COMMUNICATIONS PAGE -->
-    <div id="page-communications" class="page">
-      <div class="flex items-center justify-between mb-6">
-        <h1 class="text-2xl font-bold text-slate-800">Communications</h1>
-        <div class="flex gap-2">
-          <button class="btn btn-secondary btn-sm" onclick="syncGmail()"><i class="fab fa-google"></i> Sync Gmail</button>
-          <button class="btn btn-primary btn-sm" onclick="showLogComm()"><i class="fas fa-plus"></i> Log Communication</button>
-        </div>
-      </div>
-      <div id="communications-list"></div>
-    </div>
-
-    <!-- SETTINGS PAGE -->
-    <div id="page-settings" class="page">
-      <h1 class="text-2xl font-bold text-slate-800 mb-6">Settings & Integrations</h1>
-      <div id="settings-content"></div>
-    </div>
-
+<!-- Quick Add -->
+<div class="sheet-backdrop" id="bd-quickadd" onclick="closeSheet('sh-quickadd')"></div>
+<div class="sheet" id="sh-quickadd">
+  <span class="sheet-pill"></span>
+  <div class="sheet-header">
+    <div class="sheet-title">Quick Add</div>
+    <button class="sheet-close" onclick="closeSheet('sh-quickadd')"><i class="fas fa-xmark"></i></button>
   </div>
-</main>
-
-<!-- TOAST CONTAINER -->
-<div class="toast" id="toast-container"></div>
-
-<!-- MODALS -->
-<!-- Quick Add Modal -->
-<div class="modal" id="modal-quick-add">
-  <div class="modal-box" style="max-width:400px">
-    <h3 class="text-lg font-bold mb-4">Quick Add</h3>
-    <div class="space-y-3">
-      <button class="w-full btn btn-secondary text-left" onclick="closeModal('modal-quick-add');showAddContact()">
-        <i class="fas fa-user text-blue-500"></i> New Contact
+  <div class="sheet-body" style="padding-bottom:24px">
+    <div class="add-grid">
+      <button class="add-tile" style="background:#EEF4FF;color:#007AFF" onclick="closeSheet('sh-quickadd');openAddDeal()">
+        <i class="fas fa-handshake"></i>
+        <div><div class="add-tile-label" style="color:#007AFF">New Deal</div><div class="add-tile-sub" style="color:#007AFF">Add to pipeline</div></div>
       </button>
-      <button class="w-full btn btn-secondary text-left" onclick="closeModal('modal-quick-add');showAddDeal()">
-        <i class="fas fa-handshake text-green-500"></i> New Deal
+      <button class="add-tile" style="background:#F0FDF4;color:#34C759" onclick="closeSheet('sh-quickadd');openAddContact()">
+        <i class="fas fa-user-plus"></i>
+        <div><div class="add-tile-label" style="color:#34C759">New Contact</div><div class="add-tile-sub" style="color:#34C759">Client or lead</div></div>
       </button>
-      <button class="w-full btn btn-secondary text-left" onclick="closeModal('modal-quick-add');showAddTask()">
-        <i class="fas fa-tasks text-orange-500"></i> New Task
+      <button class="add-tile" style="background:#FFF9EC;color:#FF9500" onclick="closeSheet('sh-quickadd');openAddTask()">
+        <i class="fas fa-square-check"></i>
+        <div><div class="add-tile-label" style="color:#FF9500">New Task</div><div class="add-tile-sub" style="color:#FF9500">Reminder or to-do</div></div>
       </button>
-      <button class="w-full btn btn-secondary text-left" onclick="closeModal('modal-quick-add');showLogComm()">
-        <i class="fas fa-comment text-purple-500"></i> Log Communication
+      <button class="add-tile" style="background:#F5F3FF;color:#5856D6" onclick="closeSheet('sh-quickadd');openLogComm()">
+        <i class="fas fa-comment-dots"></i>
+        <div><div class="add-tile-label" style="color:#5856D6">Log Comm</div><div class="add-tile-sub" style="color:#5856D6">Call, email, note</div></div>
       </button>
     </div>
-    <button class="btn btn-secondary w-full mt-4" onclick="closeModal('modal-quick-add')">Cancel</button>
   </div>
 </div>
 
-<!-- Contact Modal -->
-<div class="modal" id="modal-contact">
-  <div class="modal-box modal-box-lg">
-    <div class="flex items-center justify-between mb-6">
-      <h3 class="text-xl font-bold" id="contact-modal-title">Add Contact</h3>
-      <button onclick="closeModal('modal-contact')" class="text-slate-400 hover:text-slate-600 text-xl">&times;</button>
-    </div>
-    <form id="contact-form" onsubmit="saveContact(event)">
-      <div class="grid-2 mb-4">
-        <div><label class="label">First Name *</label><input name="first_name" class="input" required></div>
-        <div><label class="label">Last Name *</label><input name="last_name" class="input" required></div>
-      </div>
-      <div class="grid-2 mb-4">
-        <div><label class="label">Email</label><input name="email" type="email" class="input"></div>
-        <div><label class="label">Phone</label><input name="phone" class="input" placeholder="(555) 000-0000"></div>
-      </div>
-      <div class="grid-2 mb-4">
-        <div><label class="label">Mobile</label><input name="mobile" class="input"></div>
-        <div><label class="label">Title/Role</label><input name="title" class="input" placeholder="Barn Manager, Owner, etc."></div>
-      </div>
-      <div class="grid-2 mb-4">
-        <div><label class="label">Type</label>
-          <select name="type" class="select">
-            <option value="lead">Lead</option>
-            <option value="prospect">Prospect</option>
-            <option value="customer">Customer</option>
-          </select>
-        </div>
-        <div><label class="label">Source</label>
-          <select name="source" class="select">
-            <option value="">Unknown</option>
-            <option value="website">Website</option>
-            <option value="referral">Referral</option>
-            <option value="trade_show">Trade Show</option>
-            <option value="cold_call">Cold Call</option>
-            <option value="email">Email</option>
-            <option value="social_media">Social Media</option>
-            <option value="design_center">Design Center</option>
-          </select>
-        </div>
-      </div>
-      <div class="grid-2 mb-4">
-        <div><label class="label">City</label><input name="city" class="input"></div>
-        <div><label class="label">State</label><input name="state" class="input" placeholder="FL, KY..."></div>
-      </div>
-      <div class="mb-4">
-        <label class="label">Preferred Contact</label>
-        <select name="preferred_contact" class="select">
-          <option value="email">Email</option>
-          <option value="phone">Phone</option>
-          <option value="text">Text/SMS</option>
+<!-- New Deal Form -->
+<div class="sheet-backdrop" id="bd-new-deal" onclick="closeSheet('sh-new-deal')"></div>
+<div class="sheet" id="sh-new-deal">
+  <span class="sheet-pill"></span>
+  <div class="sheet-header">
+    <div class="sheet-title">New Deal</div>
+    <button class="sheet-close" onclick="closeSheet('sh-new-deal')"><i class="fas fa-xmark"></i></button>
+  </div>
+  <div class="sheet-body" style="padding-bottom:24px">
+    <form id="form-deal" onsubmit="submitDeal(event)">
+      <div class="form-group"><label class="form-label">Deal Title *</label><input class="form-input" name="title" required placeholder="e.g. Wellington Farm – 12 Stalls"></div>
+      <div class="form-group"><label class="form-label">Contact</label><select class="form-input" name="contact_id" id="sel-deal-contact"><option value="">None</option></select></div>
+      <div class="form-group"><label class="form-label">Value ($)</label><input class="form-input" name="value" type="number" placeholder="0"></div>
+      <div class="form-group"><label class="form-label">Stage</label>
+        <select class="form-input" name="stage">
+          <option value="lead">New Lead</option><option value="qualified">Qualified</option>
+          <option value="proposal_sent">Proposal Sent</option><option value="estimate_sent">Estimate Sent</option>
+          <option value="estimate_accepted">Estimate Accepted</option><option value="invoice_sent">Invoice Sent</option>
+          <option value="invoice_paid">Invoice Paid</option><option value="order_placed">Order Placed</option>
+          <option value="order_confirmed">Order Confirmed</option><option value="shipping">Shipping</option>
+          <option value="delivered">Delivered</option>
         </select>
       </div>
-      <div class="mb-4">
-        <label class="label">Notes</label>
-        <textarea name="notes" class="input" rows="3" placeholder="Any relevant info about this contact..."></textarea>
-      </div>
-      <input type="hidden" name="id">
-      <div class="flex gap-3 justify-end">
-        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-contact')">Cancel</button>
-        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Contact</button>
-      </div>
+      <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" name="notes" rows="2" placeholder="Any details…"></textarea></div>
+      <button type="submit" class="btn btn-primary" style="margin-top:4px">Save Deal</button>
     </form>
   </div>
 </div>
 
-<!-- Deal Modal -->
-<div class="modal" id="modal-deal">
-  <div class="modal-box modal-box-lg">
-    <div class="flex items-center justify-between mb-6">
-      <h3 class="text-xl font-bold" id="deal-modal-title">New Deal</h3>
-      <button onclick="closeModal('modal-deal')" class="text-slate-400 hover:text-slate-600 text-xl">&times;</button>
-    </div>
-    <form id="deal-form" onsubmit="saveDeal(event)">
-      <div class="mb-4">
-        <label class="label">Deal Title *</label>
-        <input name="title" class="input" required placeholder="e.g., Wellington Farm - 12 Stall Barn">
+<!-- New Contact Form -->
+<div class="sheet-backdrop" id="bd-new-contact" onclick="closeSheet('sh-new-contact')"></div>
+<div class="sheet" id="sh-new-contact">
+  <span class="sheet-pill"></span>
+  <div class="sheet-header">
+    <div class="sheet-title">New Contact</div>
+    <button class="sheet-close" onclick="closeSheet('sh-new-contact')"><i class="fas fa-xmark"></i></button>
+  </div>
+  <div class="sheet-body" style="padding-bottom:24px">
+    <form id="form-contact" onsubmit="submitContact(event)">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group"><label class="form-label">First Name *</label><input class="form-input" name="first_name" required></div>
+        <div class="form-group"><label class="form-label">Last Name *</label><input class="form-input" name="last_name" required></div>
       </div>
-      <div class="grid-2 mb-4">
-        <div>
-          <label class="label">Contact</label>
-          <select name="contact_id" class="select" id="deal-contact-select">
-            <option value="">Select Contact...</option>
-          </select>
-        </div>
-        <div>
-          <label class="label">Value ($)</label>
-          <input name="value" type="number" class="input" placeholder="0" step="0.01">
-        </div>
+      <div class="form-group"><label class="form-label">Phone / Mobile</label><input class="form-input" name="mobile" type="tel" placeholder="(555) 000-0000"></div>
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" name="email" type="email"></div>
+      <div class="form-group"><label class="form-label">Type</label>
+        <select class="form-input" name="type"><option value="lead">Lead</option><option value="prospect">Prospect</option><option value="customer">Customer</option></select>
       </div>
-      <div class="grid-2 mb-4">
-        <div><label class="label">Stage</label>
-          <select name="stage" class="select">
-            <option value="lead">New Lead</option>
-            <option value="qualified">Qualified</option>
-            <option value="proposal_sent">Proposal Sent</option>
-            <option value="estimate_sent">Estimate Sent</option>
-            <option value="estimate_accepted">Estimate Accepted</option>
-            <option value="invoice_sent">Invoice Sent</option>
-            <option value="invoice_paid">Invoice Paid</option>
-            <option value="order_placed">Order Placed</option>
-            <option value="order_confirmed">Order Confirmed</option>
-            <option value="shipping">Shipping</option>
-            <option value="delivered">Delivered</option>
-            <option value="completed">Completed</option>
-          </select>
-        </div>
-        <div><label class="label">Priority</label>
-          <select name="priority" class="select">
-            <option value="low">Low</option>
-            <option value="medium" selected>Medium</option>
-            <option value="high">High</option>
-            <option value="urgent">Urgent</option>
-          </select>
-        </div>
-      </div>
-      <div class="mb-4">
-        <label class="label">Products of Interest</label>
-        <div class="flex flex-wrap gap-2" id="product-categories">
-          <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" value="stalls_gates" class="product-cat"> Stalls & Gates</label>
-          <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" value="fencing" class="product-cat"> Fencing</label>
-          <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" value="lighting" class="product-cat"> Lighting</label>
-          <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" value="flooring" class="product-cat"> Flooring</label>
-          <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" value="fans_ventilation" class="product-cat"> Fans/Ventilation</label>
-          <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" value="horse_walkers" class="product-cat"> Horse Walkers</label>
-          <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" value="treadmills" class="product-cat"> Treadmills</label>
-          <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" value="arenas" class="product-cat"> Arena</label>
-          <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" value="fly_systems" class="product-cat"> Fly Systems</label>
-          <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" value="therapeutic" class="product-cat"> Therapeutic</label>
-        </div>
-      </div>
-      <div class="grid-2 mb-4">
-        <div><label class="label">Expected Close Date</label><input name="expected_close_date" type="date" class="input"></div>
-        <div><label class="label">Probability (%)</label><input name="probability" type="number" class="input" placeholder="50" min="0" max="100"></div>
-      </div>
-      <div class="mb-4">
-        <label class="label">Notes</label>
-        <textarea name="notes" class="input" rows="3"></textarea>
-      </div>
-      <input type="hidden" name="id">
-      <div class="flex gap-3 justify-end">
-        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-deal')">Cancel</button>
-        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Deal</button>
-      </div>
+      <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" name="notes" rows="2"></textarea></div>
+      <button type="submit" class="btn btn-green" style="margin-top:4px">Save Contact</button>
     </form>
   </div>
 </div>
 
-<!-- Deal Detail Modal -->
-<div class="modal" id="modal-deal-detail">
-  <div class="modal-box" style="max-width:1000px;width:95vw">
-    <div id="deal-detail-content"></div>
+<!-- New Task Form -->
+<div class="sheet-backdrop" id="bd-new-task" onclick="closeSheet('sh-new-task')"></div>
+<div class="sheet" id="sh-new-task">
+  <span class="sheet-pill"></span>
+  <div class="sheet-header">
+    <div class="sheet-title">New Task</div>
+    <button class="sheet-close" onclick="closeSheet('sh-new-task')"><i class="fas fa-xmark"></i></button>
   </div>
-</div>
-
-<!-- Task Modal -->
-<div class="modal" id="modal-task">
-  <div class="modal-box">
-    <div class="flex items-center justify-between mb-4">
-      <h3 class="text-lg font-bold">Add Task</h3>
-      <button onclick="closeModal('modal-task')" class="text-slate-400">&times;</button>
-    </div>
-    <form id="task-form" onsubmit="saveTask(event)">
-      <div class="mb-3"><label class="label">Title *</label><input name="title" class="input" required></div>
-      <div class="grid-2 mb-3">
-        <div><label class="label">Type</label>
-          <select name="type" class="select">
-            <option value="follow_up">Follow Up</option>
-            <option value="call">Call</option>
-            <option value="email">Email</option>
-            <option value="meeting">Meeting</option>
-            <option value="quote_request">Quote Request</option>
-            <option value="order_check">Order Check</option>
-            <option value="delivery_check">Delivery Check</option>
-          </select>
-        </div>
-        <div><label class="label">Priority</label>
-          <select name="priority" class="select">
-            <option value="low">Low</option>
-            <option value="medium" selected>Medium</option>
-            <option value="high">High</option>
-            <option value="urgent">Urgent</option>
-          </select>
-        </div>
+  <div class="sheet-body" style="padding-bottom:24px">
+    <form id="form-task" onsubmit="submitTask(event)">
+      <div class="form-group"><label class="form-label">Task *</label><input class="form-input" name="title" required placeholder="What needs to be done?"></div>
+      <div class="form-group"><label class="form-label">Type</label>
+        <select class="form-input" name="type">
+          <option value="follow_up">Follow Up</option><option value="call">Call</option>
+          <option value="email">Email</option><option value="quote_request">Quote Request</option>
+          <option value="order_check">Order Check</option>
+        </select>
       </div>
-      <div class="grid-2 mb-3">
-        <div><label class="label">Due Date</label><input name="due_date" type="datetime-local" class="input"></div>
-        <div>
-          <label class="label">Related Deal</label>
-          <select name="deal_id" class="select" id="task-deal-select">
-            <option value="">None</option>
-          </select>
-        </div>
+      <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" name="due_date" type="date"></div>
+      <div class="form-group"><label class="form-label">Priority</label>
+        <select class="form-input" name="priority">
+          <option value="medium">Normal</option><option value="high">High</option>
+          <option value="urgent">🔴 Urgent</option><option value="low">Low</option>
+        </select>
       </div>
-      <div class="mb-3"><label class="label">Description</label><textarea name="description" class="input" rows="2"></textarea></div>
-      <input type="hidden" name="id">
-      <div class="flex gap-3 justify-end">
-        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-task')">Cancel</button>
-        <button type="submit" class="btn btn-primary">Save Task</button>
-      </div>
+      <div class="form-group"><label class="form-label">Related Deal</label><select class="form-input" name="deal_id" id="sel-task-deal"><option value="">None</option></select></div>
+      <input type="hidden" name="_id" id="task-edit-id">
+      <button type="submit" class="btn btn-orange" style="margin-top:4px">Save Task</button>
     </form>
   </div>
 </div>
 
-<!-- Communication Modal -->
-<div class="modal" id="modal-comm">
-  <div class="modal-box modal-box-lg">
-    <div class="flex items-center justify-between mb-4">
-      <h3 class="text-lg font-bold">Log / Send Communication</h3>
-      <button onclick="closeModal('modal-comm')" class="text-slate-400">&times;</button>
+<!-- Log Communication Form -->
+<div class="sheet-backdrop" id="bd-log-comm" onclick="closeSheet('sh-log-comm')"></div>
+<div class="sheet" id="sh-log-comm">
+  <span class="sheet-pill"></span>
+  <div class="sheet-header">
+    <div class="sheet-title">Log Communication</div>
+    <button class="sheet-close" onclick="closeSheet('sh-log-comm')"><i class="fas fa-xmark"></i></button>
+  </div>
+  <div class="sheet-body" style="padding-bottom:24px">
+    <div class="comm-tabs" style="margin-bottom:16px">
+      <button class="comm-tab active" id="ctab-email" onclick="setCtab('email')"><i class="fas fa-envelope"></i><span>Email</span></button>
+      <button class="comm-tab" id="ctab-sms" onclick="setCtab('sms')"><i class="fas fa-comment"></i><span>Text</span></button>
+      <button class="comm-tab" id="ctab-call" onclick="setCtab('call')"><i class="fas fa-phone"></i><span>Call</span></button>
+      <button class="comm-tab" id="ctab-note" onclick="setCtab('note')"><i class="fas fa-note-sticky"></i><span>Note</span></button>
     </div>
-    <div class="flex gap-2 mb-4" id="comm-type-tabs">
-      <button class="tab-btn active" onclick="setCommType('email', this)"><i class="fas fa-envelope"></i> Email</button>
-      <button class="tab-btn" onclick="setCommType('sms', this)"><i class="fas fa-sms"></i> SMS</button>
-      <button class="tab-btn" onclick="setCommType('call', this)"><i class="fas fa-phone"></i> Call</button>
-      <button class="tab-btn" onclick="setCommType('note', this)"><i class="fas fa-sticky-note"></i> Note</button>
-    </div>
-    <form id="comm-form" onsubmit="saveComm(event)">
-      <div class="grid-2 mb-3">
-        <div>
-          <label class="label">Contact</label>
-          <select name="contact_id" class="select" id="comm-contact-select">
-            <option value="">Select Contact...</option>
-          </select>
+    <form id="form-comm" onsubmit="submitComm(event)">
+      <div class="form-group"><label class="form-label">Contact</label><select class="form-input" name="contact_id" id="sel-comm-contact"><option value="">Select…</option></select></div>
+      <div class="form-group"><label class="form-label">Deal (optional)</label><select class="form-input" name="deal_id" id="sel-comm-deal"><option value="">None</option></select></div>
+      <div id="cf-email">
+        <div class="form-group"><label class="form-label">Subject</label><input class="form-input" name="subject" id="comm-subject" placeholder="Re: Your barn project"></div>
+        <!-- AI Draft button lives here -->
+        <div style="margin-bottom:10px">
+          <button type="button" onclick="openAIDraft()" style="display:flex;align-items:center;gap:8px;padding:11px 16px;background:linear-gradient(135deg,#5856D6,#007AFF);color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;width:100%;justify-content:center;font-family:inherit">
+            <i class="fas fa-wand-magic-sparkles"></i> Draft with AI
+          </button>
         </div>
-        <div>
-          <label class="label">Related Deal</label>
-          <select name="deal_id" class="select" id="comm-deal-select">
-            <option value="">None</option>
-          </select>
-        </div>
+        <div class="form-group"><label class="form-label">Message</label><textarea class="form-input" name="body" id="comm-body" rows="5" placeholder="Type your message or use AI Draft above…"></textarea></div>
+        <!-- Open in Mail App -->
+        <a id="comm-mailto-link" href="#" onclick="openMailApp();return false;"
+          style="display:flex;align-items:center;justify-content:center;gap:8px;padding:11px 16px;background:#F2F2F7;color:#3C3C43;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;width:100%;text-decoration:none;margin-bottom:10px">
+          <i class="fas fa-arrow-up-right-from-square"></i> Open in Mail App
+        </a>
       </div>
-      <div id="comm-email-fields">
-        <div class="mb-3"><label class="label">To (email)</label><input name="to" class="input" type="email"></div>
-        <div class="mb-3"><label class="label">Subject</label><input name="subject" class="input"></div>
-        <div class="mb-3"><label class="label">Message</label><textarea name="body" class="input" rows="5"></textarea></div>
+      <div id="cf-sms" style="display:none"><div class="form-group"><label class="form-label">Message</label><textarea class="form-input" name="sms_body" rows="3" placeholder="Hi, just following up…"></textarea></div></div>
+      <div id="cf-call" style="display:none">
+        <div class="form-group"><label class="form-label">Call Notes</label><textarea class="form-input" name="call_notes" rows="3"></textarea></div>
+        <div class="form-group"><label class="form-label">Duration (minutes)</label><input class="form-input" name="duration" type="number" placeholder="5"></div>
       </div>
-      <div id="comm-sms-fields" style="display:none">
-        <div class="mb-3"><label class="label">To (phone)</label><input name="sms_to" class="input"></div>
-        <div class="mb-3"><label class="label">Message</label><textarea name="sms_body" class="input" rows="3"></textarea></div>
-      </div>
-      <div id="comm-call-fields" style="display:none">
-        <div class="grid-2 mb-3">
-          <div><label class="label">Direction</label>
-            <select name="direction" class="select">
-              <option value="outbound">Outbound</option>
-              <option value="inbound">Inbound</option>
-            </select>
-          </div>
-          <div><label class="label">Duration (min)</label><input name="duration" type="number" class="input" placeholder="5"></div>
-        </div>
-        <div class="mb-3"><label class="label">Call Notes</label><textarea name="call_notes" class="input" rows="3"></textarea></div>
-      </div>
-      <div id="comm-note-fields" style="display:none">
-        <div class="mb-3"><label class="label">Note</label><textarea name="note_body" class="input" rows="4"></textarea></div>
-      </div>
-      <input type="hidden" name="comm_type" value="email">
-      <div class="flex gap-3 justify-end">
-        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-comm')">Cancel</button>
-        <button type="submit" class="btn btn-primary" id="comm-submit-btn"><i class="fas fa-paper-plane"></i> Send Email</button>
-      </div>
+      <div id="cf-note" style="display:none"><div class="form-group"><label class="form-label">Note</label><textarea class="form-input" name="note_body" rows="4"></textarea></div></div>
+      <input type="hidden" name="_ctype" id="ctype-val" value="email">
+      <button type="submit" class="btn btn-purple" id="comm-btn" style="margin-top:4px"><i class="fas fa-paper-plane"></i> Send Email</button>
     </form>
   </div>
 </div>
 
-<!-- PO Modal -->
-<div class="modal" id="modal-po">
-  <div class="modal-box modal-box-lg">
-    <div class="flex items-center justify-between mb-4">
-      <h3 class="text-lg font-bold">Create Purchase Order</h3>
-      <button onclick="closeModal('modal-po')" class="text-slate-400">&times;</button>
-    </div>
-    <form id="po-form" onsubmit="savePO(event)">
-      <div class="grid-2 mb-3">
-        <div>
-          <label class="label">Supplier *</label>
-          <select name="supplier_id" class="select" id="po-supplier-select">
-            <option value="">Select Supplier...</option>
-          </select>
-        </div>
-        <div>
-          <label class="label">Related Deal</label>
-          <select name="deal_id" class="select" id="po-deal-select">
-            <option value="">None</option>
-          </select>
-        </div>
+<!-- ══════════════════════════════════════════════
+     AI EMAIL COMPOSER SHEET
+══════════════════════════════════════════════ -->
+<div class="sheet-backdrop" id="bd-ai-draft" onclick="closeSheet('sh-ai-draft')"></div>
+<div class="sheet" id="sh-ai-draft">
+  <span class="sheet-pill"></span>
+  <div class="sheet-header">
+    <div>
+      <div class="sheet-title" style="display:flex;align-items:center;gap:8px">
+        <span style="display:inline-flex;width:28px;height:28px;background:linear-gradient(135deg,#5856D6,#007AFF);border-radius:8px;align-items:center;justify-content:center">
+          <i class="fas fa-wand-magic-sparkles" style="color:#fff;font-size:13px"></i>
+        </span>
+        AI Email Draft
       </div>
-      <div class="mb-3">
-        <label class="label">Line Items</label>
-        <div id="po-line-items"></div>
-        <button type="button" class="btn btn-secondary btn-sm mt-2" onclick="addPOLineItem()">
-          <i class="fas fa-plus"></i> Add Item
+      <div style="font-size:13px;color:#8E8E93;margin-top:2px">Tell AI what you want to say</div>
+    </div>
+    <button class="sheet-close" onclick="closeSheet('sh-ai-draft')"><i class="fas fa-xmark"></i></button>
+  </div>
+  <div class="sheet-body" style="padding-bottom:28px">
+
+    <!-- Step 1: Intent selector -->
+    <div id="ai-step-intent">
+      <div style="font-size:12px;font-weight:700;color:#8E8E93;letter-spacing:.05em;margin-bottom:10px">WHAT DO YOU WANT TO SAY?</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+        <button class="ai-intent-btn" onclick="selectIntent('Follow up on the estimate we sent — check if they have questions and if they are ready to move forward')">
+          <i class="fas fa-clock" style="color:#FF9500"></i>
+          <div class="label">Follow Up</div>
+          <div class="sub">Check in on estimate</div>
+        </button>
+        <button class="ai-intent-btn" onclick="selectIntent('Send a professional invoice reminder — the invoice is outstanding and we need payment to proceed')">
+          <i class="fas fa-credit-card" style="color:#FF3B30"></i>
+          <div class="label">Invoice Reminder</div>
+          <div class="sub">Payment outstanding</div>
+        </button>
+        <button class="ai-intent-btn" onclick="selectIntent('Introduce ourselves and let them know about our equine equipment products and services')">
+          <i class="fas fa-handshake" style="color:#007AFF"></i>
+          <div class="label">Introduction</div>
+          <div class="sub">New lead outreach</div>
+        </button>
+        <button class="ai-intent-btn" onclick="selectIntent('Confirm their order has been placed with the supplier and provide an estimated delivery timeline')">
+          <i class="fas fa-box" style="color:#34C759"></i>
+          <div class="label">Order Confirmation</div>
+          <div class="sub">Order placed</div>
+        </button>
+        <button class="ai-intent-btn" onclick="selectIntent('Share the shipment tracking information so the customer can monitor their delivery')">
+          <i class="fas fa-truck" style="color:#5856D6"></i>
+          <div class="label">Share Tracking</div>
+          <div class="sub">Shipment update</div>
+        </button>
+        <button class="ai-intent-btn" onclick="selectIntent('Send a thank you for their business and check that everything arrived in good condition')">
+          <i class="fas fa-star" style="color:#FF9500"></i>
+          <div class="label">Thank You</div>
+          <div class="sub">Post-delivery</div>
         </button>
       </div>
-      <div class="grid-3 mb-3">
-        <div><label class="label">Subtotal ($)</label><input name="subtotal" type="number" class="input" id="po-subtotal" readonly></div>
-        <div><label class="label">Shipping ($)</label><input name="shipping_amount" type="number" class="input" value="0" oninput="updatePOTotal()"></div>
-        <div><label class="label">Total ($)</label><input name="total" type="number" class="input" id="po-total" readonly></div>
-      </div>
-      <div class="grid-2 mb-3">
-        <div><label class="label">Expected Delivery</label><input name="expected_delivery" type="date" class="input"></div>
-        <div><label class="label">Status</label>
-          <select name="status" class="select">
-            <option value="draft">Draft</option>
-            <option value="quote_requested">Quote Requested</option>
-            <option value="approved">Approved</option>
-            <option value="submitted">Submitted</option>
-          </select>
-        </div>
-      </div>
-      <div class="mb-3"><label class="label">Notes</label><textarea name="notes" class="input" rows="2"></textarea></div>
-      <input type="hidden" name="id">
-      <div class="flex gap-3 justify-end">
-        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-po')">Cancel</button>
-        <button type="submit" class="btn btn-primary">Create PO</button>
-      </div>
-    </form>
-  </div>
-</div>
 
-<!-- Tracking Modal -->
-<div class="modal" id="modal-tracking">
-  <div class="modal-box" style="max-width:450px">
-    <div class="flex items-center justify-between mb-4">
-      <h3 class="text-lg font-bold">Add Tracking Info</h3>
-      <button onclick="closeModal('modal-tracking')" class="text-slate-400">&times;</button>
-    </div>
-    <form id="tracking-form" onsubmit="saveTracking(event)">
-      <div class="mb-3">
-        <label class="label">Carrier</label>
-        <select name="carrier" class="select">
-          <option value="UPS">UPS</option>
-          <option value="FedEx">FedEx</option>
-          <option value="USPS">USPS</option>
-          <option value="Estes Express">Estes Express</option>
-          <option value="XPO Logistics">XPO Logistics</option>
-          <option value="ABF Freight">ABF Freight</option>
-          <option value="Old Dominion">Old Dominion</option>
-          <option value="Other">Other</option>
+      <div class="form-group">
+        <label class="form-label">OR DESCRIBE IN YOUR OWN WORDS</label>
+        <textarea class="form-input" id="ai-custom-intent" rows="2" placeholder="e.g. Ask if they want to add rubber mats to the stall order…"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">TONE</label>
+        <select class="form-input" id="ai-tone">
+          <option value="professional and friendly">Professional &amp; Friendly</option>
+          <option value="warm and personal">Warm &amp; Personal</option>
+          <option value="concise and direct">Concise &amp; Direct</option>
+          <option value="formal">Formal</option>
         </select>
       </div>
-      <div class="mb-3">
-        <label class="label">Tracking Number</label>
-        <input name="tracking_number" class="input" required placeholder="Enter tracking number">
+
+      <button onclick="runAIDraft()" class="btn" style="background:linear-gradient(135deg,#5856D6,#007AFF);color:#fff" id="ai-generate-btn">
+        <i class="fas fa-wand-magic-sparkles"></i> Generate Draft
+      </button>
+    </div>
+
+    <!-- Step 2: Review & edit draft -->
+    <div id="ai-step-draft" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:700;color:#8E8E93;letter-spacing:.05em">REVIEW &amp; EDIT</div>
+        <button onclick="showAIStep('intent')" style="font-size:13px;color:#007AFF;background:none;border:none;cursor:pointer;font-weight:600">← Regenerate</button>
       </div>
-      <input type="hidden" name="po_id">
-      <div class="flex gap-3 justify-end">
-        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-tracking')">Cancel</button>
-        <button type="submit" class="btn btn-success"><i class="fas fa-truck"></i> Add Tracking & Notify Customer</button>
+
+      <div class="form-group">
+        <label class="form-label">SUBJECT</label>
+        <input class="form-input" id="ai-draft-subject" placeholder="Subject line…">
       </div>
-    </form>
+
+      <div class="form-group">
+        <label class="form-label">MESSAGE BODY</label>
+        <div class="ai-draft-area">
+          <textarea id="ai-draft-body" rows="8"></textarea>
+          <div class="ai-draft-footer">
+            <span class="ai-badge"><i class="fas fa-wand-magic-sparkles"></i> AI Generated</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button onclick="useAIDraft('send')" class="btn btn-primary">
+          <i class="fas fa-paper-plane"></i> Send Email
+        </button>
+        <button onclick="useAIDraft('mailapp')" class="btn btn-gray" style="color:#5856D6">
+          <i class="fas fa-arrow-up-right-from-square"></i> Open in Mail App
+        </button>
+        <button onclick="useAIDraft('copy')" class="btn btn-gray">
+          <i class="fas fa-copy"></i> Copy to Clipboard
+        </button>
+      </div>
+    </div>
+
   </div>
 </div>
 
+<!-- ══════════════════════════════════════════════
+     EMAIL THREAD VIEWER SHEET
+══════════════════════════════════════════════ -->
+<div class="sheet-backdrop" id="bd-email-thread" onclick="closeSheet('sh-email-thread')"></div>
+<div class="sheet" id="sh-email-thread">
+  <span class="sheet-pill"></span>
+  <div class="sheet-header" id="thread-header">
+    <div style="flex:1;padding-right:8px">
+      <div class="sheet-title" id="thread-title">Email Thread</div>
+      <div style="font-size:13px;color:#8E8E93;margin-top:2px" id="thread-subtitle"></div>
+    </div>
+    <button class="sheet-close" onclick="closeSheet('sh-email-thread')"><i class="fas fa-xmark"></i></button>
+  </div>
+  <div id="sh-email-thread-body" class="sheet-body" style="padding-bottom:28px"></div>
+</div>
+
+</div><!-- .app-wrap -->
+
+<script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>`
-}
 
 export default app
