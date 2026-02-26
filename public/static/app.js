@@ -617,14 +617,35 @@ async function openContact(id) {
   const el = document.getElementById('sh-contact-body')
   el.innerHTML = `<div class="loading" style="padding:60px"><i class="fas fa-spinner fa-spin"></i></div>`
   try {
-    const { data } = await axios.get(`${API}/contacts/${id}`)
-    const c = data.contact
-    const deals = data.deals || []
-    const comms = (data.communications || []).slice(0, 4)
+    // Fetch contact + all communications in parallel
+    const [contactResp, commsResp] = await Promise.all([
+      axios.get(`${API}/contacts/${id}`),
+      axios.get(`${API}/communications`, { params: { contact_id: id, limit: 100 } })
+    ])
+    const c = contactResp.data.contact
+    const deals = contactResp.data.deals || []
+    const allComms = commsResp.data.communications || []
+
     const init = `${c.first_name?.[0]||''}${c.last_name?.[0]||''}`
     const typeC = { lead:'#8E8E93', prospect:'#007AFF', customer:'#34C759' }
     const tc = typeC[c.type] || '#8E8E93'
     const tcBg = { lead:'#F2F2F7', prospect:'#EEF4FF', customer:'#F0FDF4' }[c.type] || '#F2F2F7'
+
+    // Gmail search URL for this contact's email
+    const gmailSearchUrl = c.email
+      ? `https://mail.google.com/mail/u/0/#search/${encodeURIComponent('from:' + c.email + ' OR to:' + c.email)}`
+      : null
+
+    // Helper: comm type icon + color
+    function commIcon(type, dir) {
+      const icons = { email:'fa-envelope', sms:'fa-comment', call:'fa-phone', note:'fa-note-sticky', meeting:'fa-calendar-check' }
+      const colors = { inbound:'#007AFF', outbound:'#5856D6', internal:'#8E8E93' }
+      return { icon: icons[type] || 'fa-message', color: colors[dir] || '#8E8E93' }
+    }
+
+    // Group comms: emails first, then calls/sms/notes
+    const emailComms = allComms.filter(m => m.type === 'email')
+    const otherComms = allComms.filter(m => m.type !== 'email')
 
     el.innerHTML = `
       <div class="sheet-header">
@@ -632,16 +653,20 @@ async function openContact(id) {
           <div style="width:52px;height:52px;border-radius:50%;background:#EEF4FF;color:#007AFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;flex-shrink:0">${init}</div>
           <div>
             <div style="font-size:20px;font-weight:700;color:#1C1C1E;letter-spacing:-0.3px">${c.first_name} ${c.last_name}</div>
-            <div style="display:flex;align-items:center;gap:8px;margin-top:3px">
+            <div style="display:flex;align-items:center;gap:8px;margin-top:3px;flex-wrap:wrap">
               <span style="background:${tcBg};color:${tc};font-size:11px;font-weight:700;padding:3px 9px;border-radius:7px;letter-spacing:0.04em">${(c.type||'lead').toUpperCase()}</span>
               ${c.company_name ? `<span style="font-size:13px;color:#8E8E93">${c.company_name}</span>` : ''}
+              ${allComms.length ? `<span style="font-size:11px;font-weight:600;color:#8E8E93;background:#F2F2F7;padding:3px 8px;border-radius:6px">${allComms.length} comm${allComms.length!==1?'s':''}</span>` : ''}
             </div>
           </div>
         </div>
         <button class="sheet-close" onclick="closeSheet('sh-contact')" style="flex-shrink:0;align-self:flex-start"><i class="fas fa-xmark"></i></button>
       </div>
+
       <div class="sheet-body">
-        <div class="contact-actions" style="margin-bottom:20px">
+
+        <!-- ── ACTION BUTTONS ── -->
+        <div class="contact-actions" style="margin-bottom:16px">
           ${c.mobile||c.phone ? `
             <a href="tel:${c.mobile||c.phone}" class="contact-btn" style="background:#F0FDF4"
                onclick="logAction('call',${c.id},null,'${c.mobile||c.phone}')">
@@ -663,12 +688,42 @@ async function openContact(id) {
           ` : '<div></div>'}
         </div>
 
+        <!-- ── CONTACT INFO ── -->
         <div class="info-block" style="margin-bottom:16px">
-          ${c.email ? `<div class="info-row"><i class="fas fa-envelope"></i><span>${c.email}</span></div>` : ''}
-          ${c.mobile||c.phone ? `<div class="info-row"><i class="fas fa-phone"></i><span>${c.mobile||c.phone}</span></div>` : ''}
+          ${c.email ? `
+            <div class="info-row" style="cursor:pointer" onclick="navigator.clipboard?.writeText('${c.email}');toast('Email copied!','success')">
+              <i class="fas fa-envelope"></i>
+              <span style="flex:1">${c.email}</span>
+              <i class="fas fa-copy" style="color:#C7C7CC;font-size:12px"></i>
+            </div>` : ''}
+          ${c.mobile||c.phone ? `
+            <div class="info-row" style="cursor:pointer" onclick="navigator.clipboard?.writeText('${c.mobile||c.phone}');toast('Phone copied!','success')">
+              <i class="fas fa-phone"></i>
+              <span style="flex:1">${c.mobile||c.phone}</span>
+              <i class="fas fa-copy" style="color:#C7C7CC;font-size:12px"></i>
+            </div>` : ''}
           ${c.city||c.state ? `<div class="info-row"><i class="fas fa-location-dot"></i><span>${[c.city,c.state].filter(Boolean).join(', ')}</span></div>` : ''}
+          ${c.last_contacted_at ? `<div class="info-row"><i class="fas fa-clock"></i><span style="color:#8E8E93">Last contact: ${timeAgo(c.last_contacted_at)}</span></div>` : ''}
         </div>
 
+        <!-- ── GMAIL DEEP LINK ── -->
+        ${gmailSearchUrl ? `
+          <a href="${gmailSearchUrl}" target="_blank"
+             style="display:flex;align-items:center;gap:10px;padding:13px 16px;background:#fff;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,0.07);margin-bottom:16px;text-decoration:none;border:1.5px solid #E5E5EA">
+            <span style="width:36px;height:36px;background:#FEE2E2;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                <path d="M20 4H4C2.9 4 2 4.9 2 6v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2z" stroke="#EA4335" stroke-width="1.5"/>
+                <path d="M2 6l10 7 10-7" stroke="#EA4335" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <div style="flex:1">
+              <div style="font-weight:700;font-size:14px;color:#1C1C1E">View in Gmail</div>
+              <div style="font-size:12px;color:#8E8E93">Search all emails with ${c.first_name}</div>
+            </div>
+            <i class="fas fa-arrow-up-right-from-square" style="color:#8E8E93;font-size:13px"></i>
+          </a>` : ''}
+
+        <!-- ── DEALS ── -->
         ${deals.length ? `
           <div class="section-head" style="padding:0 0 8px">Deals (${deals.length})</div>
           <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
@@ -686,29 +741,168 @@ async function openContact(id) {
             }).join('')}
           </div>` : ''}
 
-        ${comms.length ? `
-          <div class="section-head" style="padding:0 0 8px">Recent Communications</div>
-          <div class="info-block" style="margin-bottom:16px">
-            ${comms.map(c => `
-              <div class="info-row">
-                <i class="fas ${c.type==='email'?'fa-envelope':c.type==='sms'?'fa-comment':c.type==='call'?'fa-phone':'fa-note-sticky'}" style="color:${c.direction==='inbound'?'#007AFF':'#34C759'}"></i>
-                <div style="flex:1;min-width:0">
-                  <div style="font-size:14px;color:#3C3C43;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.subject||c.type}</div>
-                  <div style="font-size:12px;color:#8E8E93">${timeAgo(c.created_at)}</div>
+        <!-- ── ALL COMMUNICATIONS ── -->
+        ${allComms.length ? `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:0 0 8px">
+            <div class="section-head" style="padding:0">Communications (${allComms.length})</div>
+            <button onclick="openLogComm(null,${c.id},'email')" style="font-size:13px;font-weight:600;color:#007AFF;background:none;border:none;cursor:pointer;padding:0">+ Log</button>
+          </div>
+
+          <!-- Email tab / All tab toggle -->
+          <div style="display:flex;gap:6px;margin-bottom:10px">
+            <button id="ctab-all-${c.id}" onclick="showContactComms('all',${c.id})" style="padding:5px 14px;border-radius:100px;border:1.5px solid #007AFF;background:#EEF4FF;color:#007AFF;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">All</button>
+            <button id="ctab-email-${c.id}" onclick="showContactComms('email',${c.id})" style="padding:5px 14px;border-radius:100px;border:1.5px solid #E5E5EA;background:#fff;color:#636366;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">
+              <i class="fas fa-envelope" style="margin-right:4px"></i>Email (${emailComms.length})
+            </button>
+            <button id="ctab-calls-${c.id}" onclick="showContactComms('calls',${c.id})" style="padding:5px 14px;border-radius:100px;border:1.5px solid #E5E5EA;background:#fff;color:#636366;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">
+              <i class="fas fa-phone" style="margin-right:4px"></i>Calls (${otherComms.filter(x=>x.type==='call').length})
+            </button>
+          </div>
+
+          <!-- Comm list: all -->
+          <div id="commlist-all-${c.id}" class="info-block" style="margin-bottom:16px">
+            ${allComms.map(m => {
+              const ci = commIcon(m.type, m.direction)
+              const dirBadge = m.direction === 'inbound'
+                ? `<span style="font-size:10px;font-weight:700;color:#007AFF;background:#EEF4FF;padding:2px 6px;border-radius:5px">IN</span>`
+                : m.direction === 'outbound'
+                ? `<span style="font-size:10px;font-weight:700;color:#5856D6;background:#F5F3FF;padding:2px 6px;border-radius:5px">OUT</span>`
+                : `<span style="font-size:10px;font-weight:700;color:#8E8E93;background:#F2F2F7;padding:2px 6px;border-radius:5px">NOTE</span>`
+              const gmailLink = m.gmail_thread_id
+                ? `<a href="https://mail.google.com/mail/u/0/#inbox/${m.gmail_thread_id}" target="_blank" onclick="event.stopPropagation()" style="font-size:12px;color:#EA4335;font-weight:600;white-space:nowrap"><i class="fas fa-arrow-up-right-from-square"></i> Gmail</a>`
+                : m.type === 'email' && c.email
+                ? `<a href="https://mail.google.com/mail/u/0/#search/${encodeURIComponent('from:'+c.email+' OR to:'+c.email)}" target="_blank" onclick="event.stopPropagation()" style="font-size:12px;color:#EA4335;font-weight:600;white-space:nowrap"><i class="fas fa-arrow-up-right-from-square"></i> Gmail</a>`
+                : ''
+              return `
+                <div class="info-row" style="align-items:flex-start;padding:13px 16px;gap:12px">
+                  <div style="width:34px;height:34px;border-radius:10px;background:${ci.color}18;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">
+                    <i class="fas ${ci.icon}" style="font-size:14px;color:${ci.color}"></i>
+                  </div>
+                  <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
+                      ${dirBadge}
+                      <span style="font-size:13px;font-weight:700;color:#1C1C1E;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">${m.subject || (m.type==='call'?'Phone call':m.type==='sms'?'Text message':'Internal note')}</span>
+                    </div>
+                    ${m.body ? `<div style="font-size:12px;color:#8E8E93;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px">${m.body.replace(/<[^>]+>/g,'').substring(0,80)}${m.body.length>80?'…':''}</div>` : ''}
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+                      <span style="font-size:11px;color:#C7C7CC">${timeAgo(m.created_at)}${m.deal_title?' · '+m.deal_title:''}</span>
+                      ${gmailLink}
+                    </div>
+                  </div>
+                </div>`
+            }).join('')}
+          </div>
+
+          <!-- Comm list: email only -->
+          <div id="commlist-email-${c.id}" class="info-block" style="margin-bottom:16px;display:none">
+            ${emailComms.length ? emailComms.map(m => {
+              const gmailLink = m.gmail_thread_id
+                ? `<a href="https://mail.google.com/mail/u/0/#inbox/${m.gmail_thread_id}" target="_blank" onclick="event.stopPropagation()" style="font-size:13px;color:#EA4335;font-weight:600;display:flex;align-items:center;gap:5px"><i class="fas fa-arrow-up-right-from-square"></i> Open in Gmail</a>`
+                : c.email
+                ? `<a href="https://mail.google.com/mail/u/0/#search/${encodeURIComponent('subject:'+encodeURIComponent(m.subject||''))}" target="_blank" onclick="event.stopPropagation()" style="font-size:13px;color:#EA4335;font-weight:600;display:flex;align-items:center;gap:5px"><i class="fas fa-arrow-up-right-from-square"></i> Search Gmail</a>`
+                : ''
+              const dirColor = m.direction==='inbound'?'#007AFF':'#5856D6'
+              return `
+                <div style="padding:14px 16px;border-bottom:.5px solid #E5E5EA">
+                  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">
+                    <div style="flex:1;min-width:0">
+                      <div style="font-size:14px;font-weight:700;color:#1C1C1E;margin-bottom:2px;line-height:1.3">${m.subject||'(no subject)'}</div>
+                      <div style="font-size:12px;color:${dirColor};font-weight:600">${m.direction==='inbound'?'← Received':'→ Sent'} · ${timeAgo(m.created_at)}</div>
+                    </div>
+                    <span style="font-size:10px;font-weight:700;color:${dirColor};background:${dirColor}15;padding:3px 8px;border-radius:6px;white-space:nowrap;flex-shrink:0">${m.direction==='inbound'?'INBOUND':'OUTBOUND'}</span>
+                  </div>
+                  ${m.body ? `<div style="font-size:13px;color:#636366;line-height:1.5;margin-bottom:8px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${m.body.replace(/<[^>]+>/g,'').trim()}</div>` : ''}
+                  ${m.deal_title ? `<div style="font-size:12px;color:#8E8E93;margin-bottom:8px"><i class="fas fa-handshake" style="margin-right:4px"></i>${m.deal_title}</div>` : ''}
+                  ${gmailLink}
+                </div>`
+            }).join('') : `<div style="padding:20px;text-align:center;color:#8E8E93;font-size:14px">No emails logged yet</div>`}
+          </div>
+
+          <!-- Comm list: calls only -->
+          <div id="commlist-calls-${c.id}" class="info-block" style="margin-bottom:16px;display:none">
+            ${otherComms.filter(x=>x.type==='call').length ? otherComms.filter(x=>x.type==='call').map(m => `
+              <div class="info-row" style="align-items:flex-start;padding:13px 16px">
+                <div style="width:34px;height:34px;border-radius:10px;background:#F0FDF4;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                  <i class="fas fa-phone" style="font-size:14px;color:#34C759"></i>
                 </div>
-              </div>`).join('')}
-          </div>` : ''}
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:14px;font-weight:600;color:#1C1C1E">${m.direction==='inbound'?'Incoming call':'Outbound call'}</div>
+                  ${m.body ? `<div style="font-size:13px;color:#636366;margin-top:2px">${m.body.substring(0,120)}</div>` : ''}
+                  <div style="font-size:12px;color:#C7C7CC;margin-top:4px">${timeAgo(m.created_at)}${m.deal_title?' · '+m.deal_title:''}</div>
+                </div>
+              </div>`).join('') : `<div style="padding:20px;text-align:center;color:#8E8E93;font-size:14px">No calls logged yet</div>`}
+          </div>
 
-        ${c.notes ? `<div style="background:#FFFBEC;border-radius:14px;padding:14px;font-size:14px;color:#3C3C43;margin-bottom:16px;border:1px solid #FEF3C7">${c.notes}</div>` : ''}
+        ` : `
+          <!-- No comms yet -->
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:0 0 8px">
+            <div class="section-head" style="padding:0">Communications</div>
+            <button onclick="openLogComm(null,${c.id},'email')" style="font-size:13px;font-weight:600;color:#007AFF;background:none;border:none;cursor:pointer;padding:0">+ Log</button>
+          </div>
+          ${gmailSearchUrl ? `
+            <a href="${gmailSearchUrl}" target="_blank"
+               style="display:flex;align-items:center;gap:10px;padding:13px 16px;background:#FEF2F2;border-radius:14px;margin-bottom:16px;text-decoration:none;border:1px solid #FECACA">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M20 4H4C2.9 4 2 4.9 2 6v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2z" stroke="#EA4335" stroke-width="1.5"/><path d="M2 6l10 7 10-7" stroke="#EA4335" stroke-width="1.5" stroke-linecap="round"/></svg>
+              <div style="flex:1">
+                <div style="font-weight:700;font-size:14px;color:#DC2626">Search Gmail</div>
+                <div style="font-size:12px;color:#EF4444">Find existing emails with ${c.first_name}</div>
+              </div>
+              <i class="fas fa-arrow-up-right-from-square" style="color:#EA4335;font-size:13px"></i>
+            </a>` : ''}
+          <div style="background:#F9F9F9;border-radius:14px;padding:20px;text-align:center;margin-bottom:16px">
+            <div style="font-size:32px;margin-bottom:8px">💬</div>
+            <div style="font-size:14px;font-weight:600;color:#3C3C43">No communications yet</div>
+            <div style="font-size:13px;color:#8E8E93;margin-top:4px">Log a call, email, or note to start tracking</div>
+          </div>
+        `}
 
-        <button onclick="openAddDeal(${c.id});closeSheet('sh-contact')" class="btn btn-primary">
-          <i class="fas fa-handshake"></i> New Deal for ${c.first_name}
-        </button>
+        ${c.notes ? `<div style="background:#FFFBEC;border-radius:14px;padding:14px;font-size:14px;color:#3C3C43;margin-bottom:16px;border:1px solid #FEF3C7"><i class="fas fa-note-sticky" style="color:#FF9500;margin-right:8px"></i>${c.notes}</div>` : ''}
+
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <button onclick="openLogComm(null,${c.id},'email')" class="btn btn-purple">
+            <i class="fas fa-comment-dots"></i> Log Communication
+          </button>
+          <button onclick="openAddDeal(${c.id});closeSheet('sh-contact')" class="btn btn-primary">
+            <i class="fas fa-handshake"></i> New Deal for ${c.first_name}
+          </button>
+        </div>
+
       </div>
     `
-  } catch {
+  } catch(err) {
     el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading contact</p></div>`
   }
+}
+
+// ── CONTACT COMMS TAB TOGGLE ─────────────────────────
+function showContactComms(tab, contactId) {
+  // Hide all
+  const all   = document.getElementById(`commlist-all-${contactId}`)
+  const email = document.getElementById(`commlist-email-${contactId}`)
+  const calls = document.getElementById(`commlist-calls-${contactId}`)
+  if (all)   all.style.display   = 'none'
+  if (email) email.style.display = 'none'
+  if (calls) calls.style.display = 'none'
+
+  // Show selected
+  const target = document.getElementById(`commlist-${tab}-${contactId}`)
+  if (target) target.style.display = 'block'
+
+  // Update tab styles
+  const tabs = ['all','email','calls']
+  tabs.forEach(t => {
+    const btn = document.getElementById(`ctab-${t}-${contactId}`)
+    if (!btn) return
+    if (t === tab) {
+      btn.style.borderColor = '#007AFF'
+      btn.style.background  = '#EEF4FF'
+      btn.style.color       = '#007AFF'
+    } else {
+      btn.style.borderColor = '#E5E5EA'
+      btn.style.background  = '#fff'
+      btn.style.color       = '#636366'
+    }
+  })
 }
 
 // ── TASK PANEL ───────────────────────────────────────
