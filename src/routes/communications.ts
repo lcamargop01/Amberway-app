@@ -262,6 +262,38 @@ communications.post('/send-sms', async (c) => {
   }
 })
 
+// POST /api/communications/log-action - One-tap logging for call/text/email button taps
+communications.post('/log-action', async (c) => {
+  const { DB } = c.env
+  const body = await c.req.json()
+  // body: { type: 'call'|'sms'|'email', contact_id, deal_id?, phone?, email? }
+
+  const result = await DB.prepare(`
+    INSERT INTO communications (deal_id, contact_id, type, direction, subject, body, status,
+      to_address, sent_at, created_by)
+    VALUES (?, ?, ?, 'outbound', ?, ?, 'initiated', ?, CURRENT_TIMESTAMP, 'user')
+  `).bind(
+    body.deal_id   || null,
+    body.contact_id || null,
+    body.type      || 'call',
+    body.type === 'call'  ? 'Phone call initiated' :
+    body.type === 'sms'   ? 'Text message initiated' :
+    body.type === 'email' ? 'Email opened' : 'Contact initiated',
+    body.notes     || null,
+    body.phone     || body.email || null
+  ).run()
+
+  if (body.contact_id) {
+    await DB.prepare('UPDATE contacts SET last_contacted_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?')
+      .bind(body.contact_id).run()
+  }
+  if (body.deal_id) {
+    await DB.prepare('UPDATE deals SET updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(body.deal_id).run()
+  }
+
+  return c.json({ success: true, communication_id: result.meta.last_row_id })
+})
+
 // POST /api/communications/log-call - Log phone call
 communications.post('/log-call', async (c) => {
   const { DB } = c.env

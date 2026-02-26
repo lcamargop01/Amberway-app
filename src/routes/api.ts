@@ -237,6 +237,120 @@ Format as JSON: {"summary": "...", "next_action": "...", "risk": "low|medium|hig
 })
 
 // ============================================================
+// AI NEEDS-ATTENTION SCAN  (GET /api/ai/needs-attention)
+// Scans every active deal and determines what action is needed.
+// Uses smart rules (always fast) + optional OpenAI for richer insight.
+// ============================================================
+api.get('/ai/needs-attention', async (c) => {
+  const { DB } = c.env
+
+  // Pull all active deals with contact info and last comm date
+  const { results: deals } = await DB.prepare(`
+    SELECT d.*,
+      c.first_name || ' ' || c.last_name  AS contact_name,
+      c.email   AS contact_email,
+      c.mobile  AS contact_phone,
+      c.phone   AS contact_phone2,
+      COALESCE(co.name,'')                AS company_name,
+      (SELECT MAX(created_at) FROM communications
+        WHERE deal_id = d.id)             AS last_comm_at,
+      (SELECT COUNT(*) FROM tasks
+        WHERE deal_id = d.id
+          AND status IN ('pending','in_progress')
+          AND date(due_date) <= date('now')) AS overdue_task_count,
+      (SELECT COUNT(*) FROM tasks
+        WHERE deal_id = d.id
+          AND status IN ('pending','in_progress')) AS open_task_count
+    FROM deals d
+    LEFT JOIN contacts c  ON d.contact_id  = c.id
+    LEFT JOIN companies co ON d.company_id = co.id
+    WHERE d.status = 'active'
+    ORDER BY d.value DESC
+  `).all()
+
+  const now = Date.now()
+  const DAY = 86400000
+
+  // Stage-level rules: { urgency, action, icon, daysBeforeStale }
+  const STAGE_RULES: Record<string, { urgency: string; action: string; icon: string; stale: number }> = {
+    lead:              { urgency:'high',   action:'Call to qualify — new lead in pipeline',        icon:'fa-phone',          stale: 2  },
+    qualified:         { urgency:'high',   action:'Send estimate / product overview',              icon:'fa-file-lines',     stale: 3  },
+    proposal_sent:     { urgency:'medium', action:'Follow up — no reply yet?',                     icon:'fa-reply',          stale: 3  },
+    estimate_sent:     { urgency:'medium', action:'Follow up on estimate',                         icon:'fa-clock',          stale: 3  },
+    estimate_accepted: { urgency:'urgent', action:'Send invoice NOW — estimate accepted!',         icon:'fa-dollar-sign',    stale: 1  },
+    invoice_sent:      { urgency:'high',   action:'Follow up on payment',                          icon:'fa-credit-card',    stale: 5  },
+    invoice_paid:      { urgency:'urgent', action:'Place order with supplier TODAY',               icon:'fa-cart-shopping',  stale: 1  },
+    order_placed:      { urgency:'medium', action:'Confirm order with supplier',                   icon:'fa-box',            stale: 2  },
+    order_confirmed:   { urgency:'medium', action:'Get shipping ETA from supplier',                icon:'fa-truck',          stale: 3  },
+    shipping:          { urgency:'high',   action:'Send tracking info to customer',                icon:'fa-share',          stale: 2  },
+    delivered:         { urgency:'medium', action:'Confirm delivery — all good?',                  icon:'fa-circle-check',   stale: 1  },
+    completed:         { urgency:'low',    action:'Ask for a referral / review',                   icon:'fa-star',           stale: 30 },
+    on_hold:           { urgency:'low',    action:'Re-check — any change in circumstances?',       icon:'fa-pause',          stale: 14 },
+  }
+
+  const URGENCY_ORDER: Record<string, number> = { urgent:0, high:1, medium:2, low:3 }
+
+  const items: any[] = []
+
+  for (const deal of deals as any[]) {
+    const rule = STAGE_RULES[deal.stage] || { urgency:'medium', action:'Follow up', icon:'fa-comment', stale:5 }
+    const daysSinceComm = deal.last_comm_at
+      ? Math.floor((now - new Date(deal.last_comm_at).getTime()) / DAY)
+      : 999
+    const daysSinceUpdate = deal.updated_at
+      ? Math.floor((now - new Date(deal.updated_at).getTime()) / DAY)
+      : 999
+
+    // Escalate urgency if stale
+    let urgency = rule.urgency
+    if (daysSinceComm >= rule.stale * 2) urgency = 'urgent'
+    else if (daysSinceComm >= rule.stale)  urgency = urgency === 'low' ? 'medium' : urgency === 'medium' ? 'high' : 'urgent'
+
+    // Escalate further if overdue tasks exist
+    if (deal.overdue_task_count > 0 && urgency !== 'urgent') urgency = 'high'
+
+    // Build reason tag
+    const reasons: string[] = []
+    if (deal.overdue_task_count > 0) reasons.push(`${deal.overdue_task_count} overdue task${deal.overdue_task_count>1?'s':''}`)
+    if (daysSinceComm < 999) reasons.push(`last contact ${daysSinceComm}d ago`)
+    else reasons.push('never contacted')
+
+    items.push({
+      deal_id:          deal.id,
+      deal_title:       deal.title,
+      contact_name:     deal.contact_name || '',
+      contact_email:    deal.contact_email || '',
+      contact_phone:    deal.contact_phone || deal.contact_phone2 || '',
+      company_name:     deal.company_name  || '',
+      stage:            deal.stage,
+      value:            deal.value         || 0,
+      urgency,
+      action:           rule.action,
+      icon:             rule.icon,
+      days_since_comm:  daysSinceComm < 999 ? daysSinceComm : null,
+      overdue_tasks:    deal.overdue_task_count,
+      open_tasks:       deal.open_task_count,
+      reasons,
+    })
+  }
+
+  // Sort: urgent → high → medium → low, then by value desc
+  items.sort((a, b) =>
+    (URGENCY_ORDER[a.urgency] ?? 2) - (URGENCY_ORDER[b.urgency] ?? 2) ||
+    b.value - a.value
+  )
+
+  // Auto-update deal priorities in DB (fire-and-forget, no await)
+  for (const item of items) {
+    DB.prepare(`UPDATE deals SET priority=?, updated_at=updated_at WHERE id=?`)
+      .bind(item.urgency === 'urgent' ? 'urgent' : item.urgency === 'high' ? 'high' : item.urgency === 'medium' ? 'medium' : 'low', item.deal_id)
+      .run().catch(() => {})
+  }
+
+  return c.json({ items, total: items.length, scanned_at: new Date().toISOString() })
+})
+
+// ============================================================
 // AI EMAIL DRAFT
 // ============================================================
 api.post('/ai/draft-email', async (c) => {

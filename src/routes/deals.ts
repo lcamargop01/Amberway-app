@@ -168,12 +168,30 @@ deals.post('/', async (c) => {
     description: `Deal "${body.title}" created in stage: ${body.stage || 'lead'}`,
     performed_by: 'user'
   })
-  
-  // Auto-create welcome task
+
+  // Log creation as internal comm note
   await DB.prepare(`
-    INSERT INTO tasks (deal_id, contact_id, title, type, priority, due_date, ai_generated)
-    VALUES (?, ?, ?, ?, ?, datetime('now', '+1 day'), 1)
-  `).bind(dealId, body.contact_id || null, 'Follow up with new lead', 'follow_up', 'high').run()
+    INSERT INTO communications (deal_id, contact_id, type, direction, subject, body, status, created_by)
+    VALUES (?, ?, 'note', 'internal', 'Deal created', ?, 'completed', 'system')
+  `).bind(dealId, body.contact_id || null, `New deal created: ${body.title} — Stage: ${body.stage || 'lead'}`).run()
+  
+  // Auto-create stage-appropriate first tasks
+  const stage = body.stage || 'lead'
+  const firstTasks: Record<string, {title:string;type:string;days:number;priority:string}[]> = {
+    lead:     [{ title:'Initial contact call to qualify', type:'call',      days:1, priority:'high'   }],
+    qualified:[{ title:'Send estimate / product overview', type:'email',    days:1, priority:'high'   }],
+    estimate_sent: [{ title:'Follow up on estimate',       type:'call',     days:2, priority:'high'   }],
+    invoice_sent:  [{ title:'Follow up on payment',        type:'follow_up',days:3, priority:'high'   }],
+    invoice_paid:  [{ title:'Place order TODAY',           type:'order_check',days:0,priority:'urgent'}],
+  }
+  const tasks = firstTasks[stage] || [{ title:'Follow up with new lead', type:'follow_up', days:1, priority:'high' }]
+  for (const td of tasks) {
+    const due = new Date(); due.setDate(due.getDate() + td.days)
+    await DB.prepare(`
+      INSERT INTO tasks (deal_id, contact_id, title, type, priority, status, due_date, ai_generated)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?, 1)
+    `).bind(dealId, body.contact_id || null, td.title, td.type, td.priority, due.toISOString()).run()
+  }
   
   return c.json({ deal: newDeal }, 201)
 })
@@ -224,13 +242,16 @@ deals.put('/:id', async (c) => {
   return c.json({ deal: updated })
 })
 
-// PATCH /api/deals/:id/stage - Quick stage update
+// PATCH /api/deals/:id/stage - Quick stage update + auto task generation
 deals.patch('/:id/stage', async (c) => {
   const { DB } = c.env
   const id = c.req.param('id')
   const { stage } = await c.req.json()
   
-  const existing = await DB.prepare('SELECT * FROM deals WHERE id = ?').bind(id).first() as any
+  const existing = await DB.prepare(`
+    SELECT d.*, c.first_name||' '||c.last_name AS contact_name
+    FROM deals d LEFT JOIN contacts c ON d.contact_id=c.id WHERE d.id=?
+  `).bind(id).first() as any
   if (!existing) return c.json({ error: 'Deal not found' }, 404)
   
   await DB.prepare(`UPDATE deals SET stage=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(stage, id).run()
@@ -240,13 +261,54 @@ deals.patch('/:id/stage', async (c) => {
     entity_type: 'deal',
     entity_id: parseInt(id),
     action: 'stage_changed',
-    description: `Stage updated to "${stage}"`,
+    description: `Stage moved from "${existing.stage}" → "${stage}"`,
     old_value: existing.stage,
     new_value: stage,
     performed_by: 'user'
   })
-  
-  return c.json({ success: true, stage })
+
+  // Log as a communication note automatically
+  await DB.prepare(`
+    INSERT INTO communications (deal_id, contact_id, type, direction, subject, body, status, created_by)
+    VALUES (?, ?, 'note', 'internal', 'Stage updated', ?, 'completed', 'system')
+  `).bind(parseInt(id), existing.contact_id || null,
+    `Deal stage moved from "${existing.stage}" to "${stage}"`).run()
+
+  // Auto-generate tasks for the new stage
+  const stageTasks: Record<string, Array<{title:string;type:string;days:number;priority:string}>> = {
+    lead:              [{ title:`Call to qualify: ${existing.contact_name||existing.title}`,      type:'call',         days:1, priority:'high'   }],
+    qualified:         [{ title:'Send product catalog / pricing overview',                        type:'email',        days:1, priority:'high'   }],
+    proposal_sent:     [{ title:'Follow up — did they receive the proposal?',                     type:'follow_up',    days:3, priority:'high'   },
+                        { title:'2nd follow-up if no reply',                                      type:'email',        days:7, priority:'medium' }],
+    estimate_sent:     [{ title:'Follow up on estimate — any questions?',                         type:'call',         days:2, priority:'high'   }],
+    estimate_accepted: [{ title:'Send invoice NOW',                                               type:'email',        days:0, priority:'urgent' }],
+    invoice_sent:      [{ title:'Confirm invoice received',                                       type:'follow_up',    days:2, priority:'high'   },
+                        { title:'Follow up on payment',                                           type:'call',         days:7, priority:'high'   }],
+    invoice_paid:      [{ title:'Place order with supplier(s) TODAY',                             type:'order_check',  days:0, priority:'urgent' }],
+    order_placed:      [{ title:'Confirm order with supplier',                                    type:'order_check',  days:1, priority:'high'   }],
+    order_confirmed:   [{ title:'Get shipping ETA from supplier',                                 type:'order_check',  days:3, priority:'medium' }],
+    shipping:          [{ title:`Send tracking info to ${existing.contact_name||'customer'}`,     type:'email',        days:0, priority:'high'   }],
+    delivered:         [{ title:`Confirm delivery with ${existing.contact_name||'customer'}`,     type:'call',         days:0, priority:'high'   },
+                        { title:'Request review / referral',                                      type:'email',        days:3, priority:'low'    }],
+  }
+
+  const newTasks = stageTasks[stage] || []
+  let tasksCreated = 0
+  for (const td of newTasks) {
+    const due = new Date(); due.setDate(due.getDate() + td.days)
+    const existing2 = await DB.prepare(
+      `SELECT id FROM tasks WHERE deal_id=? AND title=? AND status!='completed'`
+    ).bind(parseInt(id), td.title).first()
+    if (!existing2) {
+      await DB.prepare(`
+        INSERT INTO tasks (deal_id, contact_id, title, type, priority, status, due_date, ai_generated)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?, 1)
+      `).bind(parseInt(id), existing.contact_id||null, td.title, td.type, td.priority, due.toISOString()).run()
+      tasksCreated++
+    }
+  }
+
+  return c.json({ success: true, stage, tasks_created: tasksCreated })
 })
 
 // DELETE /api/deals/:id

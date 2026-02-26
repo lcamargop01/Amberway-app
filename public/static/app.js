@@ -67,53 +67,85 @@ async function loadHome() {
   document.getElementById('hdr-greet').textContent = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
   document.getElementById('hdr-date').textContent = new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' })
 
+  // Fire both requests in parallel
   try {
-    const { data } = await axios.get(`${API}/dashboard`)
+    const [dashResp, attResp] = await Promise.all([
+      axios.get(`${API}/dashboard`),
+      axios.get(`${API}/ai/needs-attention`)
+    ])
+    const data   = dashResp.data
+    const attData= attResp.data
 
     document.getElementById('k-deals').textContent = data.kpis?.active_deals?.count ?? 0
     const taskCount = (data.overdue_tasks?.length || 0) + (data.due_today?.length || 0)
     document.getElementById('k-tasks').textContent = taskCount
     document.getElementById('k-pipe').textContent = '$' + fmtMoney(data.kpis?.active_deals?.total || 0)
 
-    // Badge
     const badge = document.getElementById('task-badge')
     if (taskCount > 0) { badge.textContent = taskCount; badge.classList.add('show') }
     else badge.classList.remove('show')
 
-    renderActions(data)
+    renderActions(data, attData)
     renderHomeDeals()
   } catch(e) {
     document.getElementById('home-actions').innerHTML = `<div class="loading" style="color:#C7C7CC"><i class="fas fa-horse"></i></div>`
   }
 }
 
-function renderActions(data) {
+function renderActions(data, attData) {
   const el = document.getElementById('home-actions')
   const items = []
 
+  // 1 — Overdue tasks (highest priority)
   ;(data.overdue_tasks || []).forEach(t => items.push({
     bg:'#FFF1F0', color:'#FF3B30', icon:'fa-exclamation-circle',
     title: t.title,
     sub: `${t.deal_title || t.contact_name || 'No deal'} · Overdue`,
-    urgent: true,
+    urgency:'urgent',
     onclick: `openTaskPanel('${encodeURIComponent(JSON.stringify(t))}')`
   }))
 
+  // 2 — Due today tasks
   ;(data.due_today || []).forEach(t => items.push({
     bg:'#FFF9EC', color:'#FF9500', icon:'fa-clock',
     title: t.title,
     sub: `${t.deal_title || t.contact_name || 'No deal'} · Due today`,
-    urgent: false,
+    urgency:'high',
     onclick: `openTaskPanel('${encodeURIComponent(JSON.stringify(t))}')`
   }))
 
+  // 3 — POs approved & ready to place
   ;(data.active_pos || []).filter(p => p.status === 'approved').forEach(po => items.push({
     bg:'#F0FDF4', color:'#34C759', icon:'fa-cart-shopping',
     title: `Place order: ${po.deal_title || po.po_number}`,
-    sub: `Supplier: ${po.supplier_name} · Invoice paid`,
-    urgent: true,
+    sub: `${po.supplier_name} · Invoice paid — place now`,
+    urgency:'urgent',
     onclick: `openPO(${po.id})`
   }))
+
+  // 4 — AI needs-attention items (deduplicate deals already shown above)
+  const shownTaskDealIds = new Set([
+    ...(data.overdue_tasks||[]).map((t) => t.deal_id),
+    ...(data.due_today||[]).map((t) => t.deal_id)
+  ])
+  ;(attData?.items || []).filter(i => i.urgency === 'urgent' || i.urgency === 'high').forEach(i => {
+    if (shownTaskDealIds.has(i.deal_id)) return  // already covered by task row
+    const urgColors = {
+      urgent: { bg:'#FFF1F0', color:'#FF3B30' },
+      high:   { bg:'#FFF9EC', color:'#FF9500' },
+      medium: { bg:'#EEF4FF', color:'#007AFF' },
+      low:    { bg:'#F2F2F7', color:'#8E8E93' }
+    }
+    const uc = urgColors[i.urgency] || urgColors.medium
+    items.push({
+      bg: uc.bg, color: uc.color,
+      icon: i.icon || 'fa-circle-dot',
+      title: i.action,
+      sub: `${i.deal_title}${i.contact_name ? ' · ' + i.contact_name : ''}${i.days_since_comm !== null ? ' · ' + i.days_since_comm + 'd no contact' : ''}`,
+      urgency: i.urgency,
+      onclick: `openDeal(${i.deal_id})`
+    })
+  })
 
   if (!items.length) {
     el.innerHTML = `
@@ -137,9 +169,9 @@ function renderActions(data) {
         </div>
         <div style="flex:1;min-width:0">
           <div class="row-main">${item.title}</div>
-          <div class="row-sub">${item.sub}</div>
+          <div class="row-sub" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.sub}</div>
         </div>
-        ${item.urgent
+        ${item.urgency === 'urgent'
           ? `<span class="urgent-badge">URGENT</span>`
           : `<i class="fas fa-chevron-right row-chevron"></i>`}
       </div>
@@ -406,16 +438,19 @@ async function openDeal(id) {
               <div style="font-weight:700;font-size:16px;color:#1C1C1E;margin-bottom:12px">${d.contact_name}</div>
               <div class="contact-actions" style="grid-template-columns:repeat(${(d.contact_mobile||d.contact_phone)?((d.contact_email)?3:2):1},1fr)">
                 ${d.contact_mobile||d.contact_phone ? `
-                  <a href="tel:${d.contact_mobile||d.contact_phone}" class="contact-btn" style="background:#F0FDF4">
+                  <a href="tel:${d.contact_mobile||d.contact_phone}" class="contact-btn" style="background:#F0FDF4"
+                     onclick="logAction('call',${d.contact_id},${d.id},'${d.contact_mobile||d.contact_phone}')">
                     <i class="fas fa-phone" style="color:#34C759"></i>
                     <span style="color:#34C759">Call</span>
                   </a>
-                  <a href="sms:${d.contact_mobile||d.contact_phone}" class="contact-btn" style="background:#EEF4FF">
+                  <a href="sms:${d.contact_mobile||d.contact_phone}" class="contact-btn" style="background:#EEF4FF"
+                     onclick="logAction('sms',${d.contact_id},${d.id},'${d.contact_mobile||d.contact_phone}')">
                     <i class="fas fa-comment" style="color:#007AFF"></i>
                     <span style="color:#007AFF">Text</span>
                   </a>` : ''}
                 ${d.contact_email ? `
-                  <a href="mailto:${d.contact_email}" class="contact-btn" style="background:#F5F3FF">
+                  <a href="mailto:${d.contact_email}" class="contact-btn" style="background:#F5F3FF"
+                     onclick="logAction('email',${d.contact_id},${d.id},'${d.contact_email}')">
                     <i class="fas fa-envelope" style="color:#5856D6"></i>
                     <span style="color:#5856D6">Email</span>
                   </a>` : ''}
@@ -516,17 +551,20 @@ async function openContact(id) {
       <div class="sheet-body">
         <div class="contact-actions" style="margin-bottom:20px">
           ${c.mobile||c.phone ? `
-            <a href="tel:${c.mobile||c.phone}" class="contact-btn" style="background:#F0FDF4">
+            <a href="tel:${c.mobile||c.phone}" class="contact-btn" style="background:#F0FDF4"
+               onclick="logAction('call',${c.id},null,'${c.mobile||c.phone}')">
               <i class="fas fa-phone" style="color:#34C759"></i>
               <span style="color:#34C759">Call</span>
             </a>
-            <a href="sms:${c.mobile||c.phone}" class="contact-btn" style="background:#EEF4FF">
+            <a href="sms:${c.mobile||c.phone}" class="contact-btn" style="background:#EEF4FF"
+               onclick="logAction('sms',${c.id},null,'${c.mobile||c.phone}')">
               <i class="fas fa-comment" style="color:#007AFF"></i>
               <span style="color:#007AFF">Text</span>
             </a>
           ` : '<div></div><div></div>'}
           ${c.email ? `
-            <a href="mailto:${c.email}" class="contact-btn" style="background:#F5F3FF">
+            <a href="mailto:${c.email}" class="contact-btn" style="background:#F5F3FF"
+               onclick="logAction('email',${c.id},null,'${c.email}')">
               <i class="fas fa-envelope" style="color:#5856D6"></i>
               <span style="color:#5856D6">Email</span>
             </a>
@@ -689,8 +727,9 @@ async function openPO(id) {
 // ── STAGE MOVE ───────────────────────────────────────
 async function moveStage(dealId, stage) {
   try {
-    await axios.patch(`${API}/deals/${dealId}/stage`, { stage })
-    toast(`Moved to: ${S[stage]?.label}`, 'success')
+    const { data } = await axios.patch(`${API}/deals/${dealId}/stage`, { stage })
+    const taskMsg = data.tasks_created > 0 ? ` · ${data.tasks_created} task${data.tasks_created>1?'s':''} created` : ''
+    toast(`Moved to: ${S[stage]?.label}${taskMsg}`, 'success')
     openDeal(dealId)
     if (state.page === 'home') loadHome()
     if (state.page === 'deals') loadDeals()
@@ -888,6 +927,18 @@ async function genTasks(dealId) {
     toast(`${data.created_count} tasks generated!`, 'success')
     openDeal(dealId)
   } catch { toast('Error generating tasks', 'error') }
+}
+
+// ── AUTO-LOG CONTACT ACTIONS ─────────────────────────
+// Call this silently whenever user taps Call / Text / Email
+function logAction(type, contactId, dealId, phoneOrEmail) {
+  axios.post(`${API}/communications/log-action`, {
+    type,
+    contact_id: contactId || null,
+    deal_id:    dealId    || null,
+    phone:      type !== 'email' ? (phoneOrEmail || null) : null,
+    email:      type === 'email' ? (phoneOrEmail || null) : null,
+  }).catch(() => {})  // fire-and-forget, never block the user
 }
 
 // ── ORDERS ───────────────────────────────────────────
