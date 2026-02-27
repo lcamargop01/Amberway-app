@@ -687,15 +687,60 @@ async function loadOrders() {
 }
 
 // ── TASKS PAGE ───────────────────────────────────────
+// Task filter state
+const taskFilters = { priority: '', due: '', search: '' }
+
+let taskSearchTimer = null
+function onTaskSearch(val) {
+  clearTimeout(taskSearchTimer)
+  taskFilters.search = val.trim()
+  taskSearchTimer = setTimeout(() => loadTasks(), 280)
+}
+
+function setTaskPriority(p, btn) {
+  taskFilters.priority = p
+  taskFilters.due = ''                     // clear due-date chip
+  document.querySelectorAll('#task-filter-chips .task-chip').forEach(b => b.classList.remove('active'))
+  btn.classList.add('active')
+  loadTasks()
+}
+
+function setTaskDue(d, btn) {
+  taskFilters.due = d
+  taskFilters.priority = ''               // clear priority chip
+  document.querySelectorAll('#task-filter-chips .task-chip').forEach(b => b.classList.remove('active'))
+  btn.classList.add('active')
+  loadTasks()
+}
+
 async function loadTasks() {
   const el = document.getElementById('tasks-list')
   el.innerHTML = `<div class="loading"><i class="fas fa-spinner fa-spin"></i></div>`
   try {
     const status = state.tasksFilter === 'done' ? 'completed' : 'pending'
-    const { data } = await axios.get(`${API}/tasks`, { params: { status, limit:100 } })
+    const params = { status, limit: 200 }
+    if (taskFilters.search)   params.search   = taskFilters.search
+    if (taskFilters.priority) params.priority = taskFilters.priority
+    if (taskFilters.due)      params.due      = taskFilters.due
+
+    const { data } = await axios.get(`${API}/tasks`, { params })
     const tasks = data.tasks || []
+
+    // update count line
+    const countEl = document.getElementById('tasks-count-line')
+    if (countEl) {
+      const hasFilter = taskFilters.search || taskFilters.priority || taskFilters.due
+      countEl.textContent = hasFilter
+        ? `${tasks.length} task${tasks.length !== 1 ? 's' : ''} matching filter`
+        : `${tasks.length} task${tasks.length !== 1 ? 's' : ''}`
+    }
+
     if (!tasks.length) {
-      el.innerHTML = `<div class="empty-state"><i class="fas fa-circle-check"></i><p>${state.tasksFilter === 'done' ? 'No completed tasks' : 'No pending tasks!'}</p></div>`
+      el.innerHTML = `<div class="empty-state"><i class="fas fa-circle-check"></i><p>${
+        taskFilters.search
+          ? `No tasks matching "${taskFilters.search}"`
+          : state.tasksFilter === 'done' ? 'No completed tasks' : 'No pending tasks!'
+      }</p></div>`
       return
     }
 
@@ -703,19 +748,30 @@ async function loadTasks() {
       const ov = t.due_date && new Date(t.due_date) < new Date() && t.status !== 'completed'
       const pc = PC[t.priority] || '#8E8E93'
       const enc = encodeURIComponent(JSON.stringify(t))
+      const dueFmt = t.due_date
+        ? (ov ? '⚠️ Overdue · ' : '') + new Date(t.due_date).toLocaleDateString('en-US',{month:'short',day:'numeric'})
+        : 'No date'
+      // highlight search match in title
+      let titleHtml = t.title
+      if (taskFilters.search) {
+        const re = new RegExp(`(${taskFilters.search.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi')
+        titleHtml = t.title.replace(re, '<mark style="background:#FFF176;border-radius:2px;padding:0 1px">$1</mark>')
+      }
       return `
         <div class="task-row" onclick="openTaskPanel('${enc}')">
           <div class="task-check${t.status==='completed'?' done':''}" onclick="event.stopPropagation();completeTask(${t.id},this)">
             ${t.status === 'completed' ? `<i class="fas fa-check" style="font-size:11px;color:#fff"></i>` : ''}
           </div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:15px;font-weight:600;color:${t.status==='completed'?'#C7C7CC':'#1C1C1E'};${t.status==='completed'?'text-decoration:line-through':''};line-height:1.3">${t.title}</div>
+            <div style="font-size:15px;font-weight:600;color:${t.status==='completed'?'#C7C7CC':'#1C1C1E'};${t.status==='completed'?'text-decoration:line-through':''};line-height:1.3">${titleHtml}</div>
             <div style="font-size:12px;color:${ov?'#FF3B30':'#8E8E93'};margin-top:3px">
-              ${t.deal_title ? t.deal_title + ' · ' : ''}${t.due_date ? (ov ? '⚠️ Overdue · ' : '') + new Date(t.due_date).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : 'No date'}
+              ${t.deal_title ? `<span style="color:#007AFF">${t.deal_title}</span> · ` : ''}${dueFmt}
             </div>
           </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
             <span style="font-size:11px;font-weight:700;color:${pc}">${(t.priority||'medium').toUpperCase()}</span>
+            <button onclick="event.stopPropagation();editTask('${enc}')"
+              style="font-size:11px;color:#007AFF;background:none;border:none;padding:0;cursor:pointer;font-family:inherit;font-weight:600">Edit</button>
           </div>
         </div>
       `
@@ -734,6 +790,12 @@ function filterTasks(f, btn) {
   state.tasksFilter = f
   document.querySelectorAll('#tasks-seg .seg-btn').forEach(b => b.classList.remove('active'))
   btn.classList.add('active')
+  // reset chips back to All
+  document.querySelectorAll('#task-filter-chips .task-chip').forEach(b => b.classList.remove('active'))
+  const allChip = document.getElementById('tchip-all')
+  if (allChip) allChip.classList.add('active')
+  taskFilters.priority = ''
+  taskFilters.due = ''
   loadTasks()
 }
 
@@ -1172,25 +1234,29 @@ function openTaskPanel(raw) {
         <div style="font-size:20px;font-weight:700;color:#1C1C1E;line-height:1.3">${task.title}</div>
         <div style="font-size:13px;color:#8E8E93;margin-top:6px;display:flex;flex-wrap:wrap;gap:10px">
           ${task.deal_title ? `<span><i class="fas fa-handshake" style="margin-right:4px"></i>${task.deal_title}</span>` : ''}
+          ${task.contact_name ? `<span><i class="fas fa-person" style="margin-right:4px"></i>${task.contact_name}</span>` : ''}
           ${task.due_date ? `<span><i class="fas fa-calendar" style="margin-right:4px"></i>${new Date(task.due_date).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</span>` : ''}
         </div>
+        ${task.notes ? `<div style="margin-top:10px;font-size:14px;color:#3C3C43;background:#F2F2F7;border-radius:10px;padding:10px 12px;line-height:1.5">${task.notes}</div>` : ''}
       </div>
       <button class="sheet-close" onclick="closeSheet('sh-panel')" style="flex-shrink:0;align-self:flex-start"><i class="fas fa-xmark"></i></button>
     </div>
     <div class="sheet-body" style="padding-bottom:24px">
       <div style="display:flex;flex-direction:column;gap:10px">
+        ${task.status !== 'completed' ? `
         <button onclick="completeTask(${task.id},null);closeSheet('sh-panel');if(state.page==='tasks')loadTasks();if(state.page==='home')loadHome()" class="btn btn-green">
           <i class="fas fa-circle-check"></i> Mark Complete
+        </button>` : ''}
+        <button onclick="closeSheet('sh-panel');editTask('${enc}')" class="btn btn-primary">
+          <i class="fas fa-pen"></i> Edit Task
         </button>
+        ${task.status !== 'completed' ? `
         <button onclick="snoozeTask(${task.id},1);closeSheet('sh-panel')" class="btn btn-orange">
           <i class="fas fa-clock"></i> Snooze 1 Day
         </button>
         <button onclick="snoozeTask(${task.id},3);closeSheet('sh-panel')" class="btn btn-gray">
           <i class="fas fa-clock"></i> Snooze 3 Days
-        </button>
-        <button onclick="closeSheet('sh-panel');editTask('${enc}')" class="btn btn-gray">
-          <i class="fas fa-pen"></i> Edit Task
-        </button>
+        </button>` : ''}
         <button onclick="delTask(${task.id});closeSheet('sh-panel')" class="btn btn-red-soft">
           <i class="fas fa-trash"></i> Delete Task
         </button>
@@ -1317,14 +1383,23 @@ async function openAddTask(prefill) {
   const f = document.getElementById('form-task')
   f.reset()
   document.getElementById('task-edit-id').value = ''
+  const titleEl = document.getElementById('new-task-title')
+  const submitBtn = document.getElementById('task-submit-btn')
+
   if (prefill) {
+    if (titleEl) titleEl.textContent = 'Edit Task'
+    if (submitBtn) submitBtn.textContent = 'Save Changes'
     f.querySelector('[name=title]').value = prefill.title || ''
     f.querySelector('[name=priority]').value = prefill.priority || 'medium'
     f.querySelector('[name=type]').value = prefill.type || 'follow_up'
     if (prefill.due_date) f.querySelector('[name=due_date]').value = prefill.due_date?.split('T')[0] || ''
     if (prefill.deal_id) f.querySelector('[name=deal_id]').value = prefill.deal_id
+    const notesEl = f.querySelector('[name=notes]')
+    if (notesEl) notesEl.value = prefill.notes || ''
     document.getElementById('task-edit-id').value = prefill.id || ''
   } else {
+    if (titleEl) titleEl.textContent = 'New Task'
+    if (submitBtn) submitBtn.textContent = 'Save Task'
     const t = new Date(); t.setDate(t.getDate() + 1)
     f.querySelector('[name=due_date]').value = t.toISOString().split('T')[0]
   }
@@ -1381,6 +1456,8 @@ async function submitTask(e) {
   e.preventDefault()
   const d = Object.fromEntries(new FormData(e.target))
   const id = d._id; delete d._id
+  const btn = document.getElementById('task-submit-btn')
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…' }
   try {
     if (id) { await axios.put(`${API}/tasks/${id}`, d); toast('Task updated!', 'success') }
     else { await axios.post(`${API}/tasks`, d); toast('Task added!', 'success') }
@@ -1388,6 +1465,7 @@ async function submitTask(e) {
     if (state.page === 'tasks') loadTasks()
     if (state.page === 'home') loadHome()
   } catch { toast('Error saving task', 'error') }
+  finally { if (btn) { btn.disabled = false } }
 }
 
 async function submitComm(e) {

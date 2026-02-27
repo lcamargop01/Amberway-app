@@ -12,7 +12,10 @@ tasks.get('/', async (c) => {
   const deal_id = c.req.query('deal_id')
   const contact_id = c.req.query('contact_id')
   const overdue = c.req.query('overdue')
-  const limit = parseInt(c.req.query('limit') || '50')
+  const search = c.req.query('search') || ''
+  const priority = c.req.query('priority') || ''
+  const due_filter = c.req.query('due') || ''   // 'overdue' | 'today' | 'week'
+  const limit = parseInt(c.req.query('limit') || '200')
 
   let query = `
     SELECT t.*, d.title as deal_title, 
@@ -28,12 +31,25 @@ tasks.get('/', async (c) => {
   if (deal_id) { query += ' AND t.deal_id = ?'; params.push(deal_id) }
   if (contact_id) { query += ' AND t.contact_id = ?'; params.push(contact_id) }
   if (overdue === 'true') { query += " AND t.due_date < datetime('now') AND t.status != 'completed'" }
-  
-  query += ' ORDER BY t.due_date ASC, t.priority DESC LIMIT ?'
+  if (search) {
+    query += " AND (t.title LIKE ? OR d.title LIKE ? OR (c.first_name || ' ' || c.last_name) LIKE ?)"
+    const like = `%${search}%`
+    params.push(like, like, like)
+  }
+  if (priority) { query += ' AND t.priority = ?'; params.push(priority) }
+  if (due_filter === 'overdue') {
+    query += " AND t.due_date < date('now') AND t.status != 'completed'"
+  } else if (due_filter === 'today') {
+    query += " AND date(t.due_date) = date('now')"
+  } else if (due_filter === 'week') {
+    query += " AND date(t.due_date) <= date('now', '+7 days') AND t.status != 'completed'"
+  }
+
+  query += ' ORDER BY CASE t.priority WHEN \'urgent\' THEN 1 WHEN \'high\' THEN 2 WHEN \'medium\' THEN 3 ELSE 4 END, t.due_date ASC LIMIT ?'
   params.push(limit)
 
   const { results } = await DB.prepare(query).bind(...params).all()
-  return c.json({ tasks: results })
+  return c.json({ tasks: results, total: results.length })
 })
 
 // GET /api/tasks/due-today

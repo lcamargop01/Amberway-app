@@ -347,6 +347,18 @@ body {
 }
 .seg-btn.active { background: #fff; color: #1C1C1E; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
 
+/* ── TASK FILTER CHIPS ───────────────────────── */
+.task-chip {
+  flex-shrink: 0; padding: 5px 12px; border-radius: 20px;
+  border: 1.5px solid #E5E5EA; background: #fff;
+  font-size: 12px; font-weight: 600; color: #636366;
+  cursor: pointer; font-family: inherit; white-space: nowrap;
+  transition: all 0.15s;
+}
+.task-chip.active {
+  background: #1C1C1E; color: #fff; border-color: #1C1C1E;
+}
+
 /* ── COMM TABS ────────────────────────────────── */
 .comm-tabs { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
 .comm-tab {
@@ -682,10 +694,35 @@ body {
       <div class="page-title">Tasks</div>
       <button onclick="openAddTask()" style="padding:8px 14px;background:#007AFF;color:#fff;border-radius:10px;border:none;font-size:14px;font-weight:600;cursor:pointer">+ Add</button>
     </div>
-    <div class="segment" id="tasks-seg">
+
+    <!-- Search bar -->
+    <div style="position:relative;margin-bottom:10px">
+      <i class="fas fa-magnifying-glass" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#8E8E93;font-size:14px;pointer-events:none"></i>
+      <input id="task-search-inp"
+        type="search" placeholder="Search tasks, deals, contacts…"
+        oninput="onTaskSearch(this.value)"
+        style="width:100%;padding:10px 12px 10px 36px;border:1px solid #E5E5EA;border-radius:12px;font-size:15px;background:#F2F2F7;outline:none;box-sizing:border-box;font-family:inherit;-webkit-appearance:none">
+    </div>
+
+    <!-- Status tabs -->
+    <div class="segment" id="tasks-seg" style="margin-bottom:8px">
       <button class="seg-btn active" onclick="filterTasks('pending',this)">Pending</button>
       <button class="seg-btn" onclick="filterTasks('done',this)">Completed</button>
     </div>
+
+    <!-- Priority + due-date filter chips -->
+    <div id="task-filter-chips" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none">
+      <button class="task-chip active" id="tchip-all"      onclick="setTaskPriority('',this)">All</button>
+      <button class="task-chip"        id="tchip-overdue"  onclick="setTaskDue('overdue',this)">⚠️ Overdue</button>
+      <button class="task-chip"        id="tchip-today"    onclick="setTaskDue('today',this)">Today</button>
+      <button class="task-chip"        id="tchip-week"     onclick="setTaskDue('week',this)">This Week</button>
+      <button class="task-chip"        id="tchip-urgent"   onclick="setTaskPriority('urgent',this)">🔴 Urgent</button>
+      <button class="task-chip"        id="tchip-high"     onclick="setTaskPriority('high',this)">High</button>
+      <button class="task-chip"        id="tchip-medium"   onclick="setTaskPriority('medium',this)">Medium</button>
+    </div>
+
+    <!-- Result count line -->
+    <div id="tasks-count-line" style="font-size:12px;color:#8E8E93;margin-top:6px;min-height:16px"></div>
   </div>
   <div id="tasks-list">
     <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
@@ -829,7 +866,7 @@ body {
 <div class="sheet" id="sh-new-task">
   <span class="sheet-pill"></span>
   <div class="sheet-header">
-    <div class="sheet-title">New Task</div>
+    <div class="sheet-title" id="new-task-title">New Task</div>
     <button class="sheet-close" onclick="closeSheet('sh-new-task')"><i class="fas fa-xmark"></i></button>
   </div>
   <div class="sheet-body" style="padding-bottom:24px">
@@ -849,9 +886,10 @@ body {
           <option value="urgent">🔴 Urgent</option><option value="low">Low</option>
         </select>
       </div>
+      <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" name="notes" rows="2" placeholder="Optional notes…"></textarea></div>
       <div class="form-group"><label class="form-label">Related Deal</label><select class="form-input" name="deal_id" id="sel-task-deal"><option value="">None</option></select></div>
       <input type="hidden" name="_id" id="task-edit-id">
-      <button type="submit" class="btn btn-orange" style="margin-top:4px">Save Task</button>
+      <button type="submit" class="btn btn-orange" id="task-submit-btn" style="margin-top:4px">Save Task</button>
     </form>
   </div>
 </div>
