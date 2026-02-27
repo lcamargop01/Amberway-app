@@ -226,6 +226,15 @@ body {
   font-weight: 700; font-size: 16px; flex-shrink: 0;
 }
 
+/* ── OUTREACH ROW (Today + Pipeline) ──────────── */
+.outreach-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 14px; cursor: pointer; transition: background 0.1s;
+  border-bottom: 0.5px solid #E5E5EA;
+}
+.outreach-row:last-child { border-bottom: none; }
+.outreach-row:active { background: #F5F5F7; }
+
 /* ── PO CARD ──────────────────────────────────── */
 .po-card {
   background: #fff; border-radius: 16px;
@@ -568,63 +577,54 @@ body {
      PAGE: TODAY
 ═════════════════════════════════════════════ -->
 <div class="page active" id="page-home">
-  <div class="page-header">
+  <div class="page-header" style="padding-bottom:12px">
     <div style="display:flex;align-items:center;justify-content:space-between">
       <div>
-        <div id="hdr-date" style="font-size:13px;color:#8E8E93;font-weight:500"></div>
-        <div id="hdr-greet" class="page-title">Today</div>
+        <div id="hdr-date" style="font-size:12px;color:#8E8E93;font-weight:500;text-transform:uppercase;letter-spacing:.04em"></div>
+        <div id="hdr-greet" class="page-title" style="font-size:24px">Today</div>
       </div>
       <button onclick="openSheet('sh-quickadd')" style="width:36px;height:36px;background:#007AFF;border-radius:50%;border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">
         <i class="fas fa-plus"></i>
       </button>
     </div>
-  </div>
-
-  <!-- KPI Strip -->
-  <div class="kpi-strip" id="home-kpis">
-    <div class="kpi-card">
-      <div class="kpi-value" id="k-deals" style="color:#007AFF">—</div>
-      <div class="kpi-label">Deals</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-value" id="k-tasks" style="color:#FF9500">—</div>
-      <div class="kpi-label">Due Today</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-value" id="k-pipe" style="color:#34C759">—</div>
-      <div class="kpi-label">Pipeline</div>
+    <!-- Role toggle -->
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button id="view-brian" onclick="setHomeView('brian',this)" style="flex:1;padding:8px;border-radius:10px;border:none;font-size:13px;font-weight:700;cursor:pointer;background:#1C1C1E;color:#fff">👋 Brian — Outreach</button>
+      <button id="view-laura" onclick="setHomeView('laura',this)" style="flex:1;padding:8px;border-radius:10px;border:2px solid #E5E5EA;font-size:13px;font-weight:700;cursor:pointer;background:#fff;color:#3C3C43">⚙️ Laura — Operations</button>
     </div>
   </div>
 
-  <!-- Action Needed -->
-  <div class="section-head">Action Needed</div>
-  <div id="home-actions">
-    <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
+  <!-- Stage summary pills -->
+  <div id="stage-pills" style="display:flex;gap:8px;padding:0 16px 12px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none"></div>
+
+  <!-- Brian view: outreach groups -->
+  <div id="brian-view">
+    <div id="home-outreach">
+      <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
+    </div>
   </div>
 
-  <div class="spacer" style="margin-top:12px"></div>
-
-  <!-- Active Deals -->
-  <div class="section-head">Active Deals</div>
-  <div id="home-deals">
-    <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
+  <!-- Laura view: operations tasks -->
+  <div id="laura-view" style="display:none">
+    <div id="home-ops">
+      <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
+    </div>
   </div>
-  <div style="height:20px"></div>
+
+  <div style="height:24px"></div>
 </div>
 
 <!-- ═════════════════════════════════════════════
      PAGE: PIPELINE
 ═════════════════════════════════════════════ -->
 <div class="page" id="page-deals">
-  <div class="page-header">
+  <div class="page-header" style="padding-bottom:12px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
       <div class="page-title">Pipeline</div>
+      <button onclick="openSheet('sh-quickadd')" style="padding:8px 14px;background:#007AFF;color:#fff;border-radius:10px;border:none;font-size:13px;font-weight:600;cursor:pointer">+ Deal</button>
     </div>
-    <div class="segment" id="deals-seg">
-      <button class="seg-btn active" onclick="filterDeals('active',this)">Active</button>
-      <button class="seg-btn" onclick="filterDeals('won',this)">Won</button>
-      <button class="seg-btn" onclick="filterDeals('lost',this)">Lost</button>
-    </div>
+    <!-- Stage filter scrollable row -->
+    <div id="pipe-stage-tabs" style="display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px"></div>
   </div>
   <div id="deals-list">
     <div class="loading"><i class="fas fa-spinner fa-spin"></i></div>
@@ -636,11 +636,16 @@ body {
      PAGE: CONTACTS
 ═════════════════════════════════════════════ -->
 <div class="page" id="page-contacts">
-  <div class="page-header">
+  <div class="page-header" style="padding-bottom:12px">
     <div class="page-title" style="margin-bottom:10px">Contacts</div>
-    <div class="search-wrap">
+    <div class="search-wrap" style="margin-bottom:10px">
       <i class="fas fa-magnifying-glass"></i>
-      <input type="search" class="search-input" placeholder="Search name, company…" id="csearch" oninput="debounceSearch(this.value)">
+      <input type="search" class="search-input" placeholder="Search name, email, phone…" id="csearch" oninput="debounceSearch(this.value)">
+    </div>
+    <div class="segment" id="contacts-seg">
+      <button class="seg-btn active" onclick="filterContacts('all',this)">All <span id="cnt-all" style="font-size:11px;opacity:.7"></span></button>
+      <button class="seg-btn" onclick="filterContacts('lead',this)">Leads <span id="cnt-leads" style="font-size:11px;opacity:.7"></span></button>
+      <button class="seg-btn" onclick="filterContacts('customer',this)">Customers <span id="cnt-cust" style="font-size:11px;opacity:.7"></span></button>
     </div>
   </div>
   <div id="contacts-list">

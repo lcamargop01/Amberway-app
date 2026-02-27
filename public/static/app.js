@@ -65,222 +65,402 @@ function closeSheet(id) {
 }
 
 // ── HOME ─────────────────────────────────────────────
-// Add active shipments to Today's action cards
-async function loadActiveShipmentsForHome() {
-  try {
-    const { data } = await axios.get(`${API}/shipments/active/summary`)
-    return data.active_shipments || []
-  } catch { return [] }
+const state_home = { view: 'brian', allDeals: [] }
+
+function setHomeView(view, btn) {
+  state_home.view = view
+  document.getElementById('brian-view').style.display = view === 'brian' ? '' : 'none'
+  document.getElementById('laura-view').style.display  = view === 'laura' ? '' : 'none'
+  document.getElementById('view-brian').style.background = view === 'brian' ? '#1C1C1E' : '#fff'
+  document.getElementById('view-brian').style.color      = view === 'brian' ? '#fff'    : '#3C3C43'
+  document.getElementById('view-brian').style.border     = view === 'brian' ? 'none'    : '2px solid #E5E5EA'
+  document.getElementById('view-laura').style.background = view === 'laura' ? '#1C1C1E' : '#fff'
+  document.getElementById('view-laura').style.color      = view === 'laura' ? '#fff'    : '#3C3C43'
+  document.getElementById('view-laura').style.border     = view === 'laura' ? 'none'    : '2px solid #E5E5EA'
 }
 
 async function loadHome() {
   const h = new Date().getHours()
-  document.getElementById('hdr-greet').textContent = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
-  document.getElementById('hdr-date').textContent = new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' })
+  document.getElementById('hdr-greet').textContent = h < 12 ? 'Good morning ☀️' : h < 17 ? 'Good afternoon' : 'Good evening 🌙'
+  document.getElementById('hdr-date').textContent = new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' }).toUpperCase()
 
-  // Fire both requests in parallel
   try {
-    const [dashResp, attResp] = await Promise.all([
+    const [dashResp, dealsResp] = await Promise.all([
       axios.get(`${API}/dashboard`),
-      axios.get(`${API}/ai/needs-attention`)
+      axios.get(`${API}/deals`, { params: { status:'active', limit:200 } })
     ])
-    const data   = dashResp.data
-    const attData= attResp.data
+    const dash = dashResp.data
+    const deals = dealsResp.data.deals || []
+    state_home.allDeals = deals
 
-    document.getElementById('k-deals').textContent = data.kpis?.active_deals?.count ?? 0
-    const taskCount = (data.overdue_tasks?.length || 0) + (data.due_today?.length || 0)
-    document.getElementById('k-tasks').textContent = taskCount
-    document.getElementById('k-pipe').textContent = '$' + fmtMoney(data.kpis?.active_deals?.total || 0)
+    // Stage summary pills
+    renderStagePills(dash.deals_by_stage || [])
 
+    // Brian view
+    renderBrianView(deals, dash)
+
+    // Laura view
+    renderLauraView(deals, dash)
+
+    // Badge
+    const taskCount = (dash.overdue_tasks?.length || 0) + (dash.due_today?.length || 0)
     const badge = document.getElementById('task-badge')
     if (taskCount > 0) { badge.textContent = taskCount; badge.classList.add('show') }
     else badge.classList.remove('show')
 
-    const shipData = await loadActiveShipmentsForHome()
-    renderActions(data, attData, shipData)
-    renderHomeDeals()
   } catch(e) {
-    document.getElementById('home-actions').innerHTML = `<div class="loading" style="color:#C7C7CC"><i class="fas fa-horse"></i></div>`
+    console.error(e)
+    document.getElementById('home-outreach').innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading data</p></div>`
   }
 }
 
-function renderActions(data, attData, activeShipments = []) {
-  const el = document.getElementById('home-actions')
-  const items = []
+function renderStagePills(byStage) {
+  const el = document.getElementById('stage-pills')
+  const order = ['lead','qualified','estimate_sent','estimate_accepted','invoice_sent','invoice_paid','order_placed','order_confirmed','shipping','delivered']
+  const map = {}
+  byStage.forEach(r => map[r.stage] = r.count)
+  el.innerHTML = order.filter(s => map[s] > 0).map(s => {
+    const st = S[s]
+    return `<button onclick="navTo('deals');filterDealsByStage('${s}')"
+      style="flex-shrink:0;padding:6px 12px;border-radius:20px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:${st.bg};color:${st.color};white-space:nowrap">
+      ${st.label} <span style="opacity:.7">${map[s]}</span>
+    </button>`
+  }).join('')
+}
 
-  // 0 — Active shipments needing attention
-  ;(activeShipments || []).forEach(s => {
-    const needsNotify = !s.customer_notified
-    const isOFD = s.status === 'out_for_delivery'
-    if (needsNotify || isOFD) items.push({
-      icon: isOFD ? 'fa-truck-fast' : 'fa-truck',
-      iconBg: isOFD ? '#FFF9EC' : '#F5F3FF',
-      iconColor: isOFD ? '#FF9500' : '#5856D6',
-      title: isOFD ? `📬 Out for delivery — ${s.carrier}` : `🚚 ${s.carrier} tracking added`,
-      sub: needsNotify
-        ? (s.contact_name ? `Notify ${s.contact_name} — ${s.tracking_number}` : `Send tracking #${s.tracking_number} to customer`)
-        : `${s.tracking_number}${s.estimated_delivery ? ' · ETA ' + s.estimated_delivery : ''}`,
-      urgent: isOFD,
-      onclick: `openShipment(${s.id})`
-    })
-  })
+// ── BRIAN VIEW: who to reach out to ──────────────────
+function renderBrianView(deals, dash) {
+  const el = document.getElementById('home-outreach')
 
-  // 1 — Overdue tasks (highest priority)
-  ;(data.overdue_tasks || []).forEach(t => items.push({
-    bg:'#FFF1F0', color:'#FF3B30', icon:'fa-exclamation-circle',
-    title: t.title,
-    sub: `${t.deal_title || t.contact_name || 'No deal'} · Overdue`,
-    urgency:'urgent',
-    onclick: `openTaskPanel('${encodeURIComponent(JSON.stringify(t))}')`
-  }))
+  // Group deals into outreach buckets
+  const callBack   = deals.filter(d => ['lead','qualified'].includes(d.stage))
+  const followUp   = deals.filter(d => ['estimate_sent','proposal_sent'].includes(d.stage))
+  const hotDeals   = deals.filter(d => ['estimate_accepted','invoice_sent'].includes(d.stage))
+  const shipping   = deals.filter(d => ['shipping','order_confirmed','order_placed','invoice_paid'].includes(d.stage))
 
-  // 2 — Due today tasks
-  ;(data.due_today || []).forEach(t => items.push({
-    bg:'#FFF9EC', color:'#FF9500', icon:'fa-clock',
-    title: t.title,
-    sub: `${t.deal_title || t.contact_name || 'No deal'} · Due today`,
-    urgency:'high',
-    onclick: `openTaskPanel('${encodeURIComponent(JSON.stringify(t))}')`
-  }))
+  let html = ''
 
-  // 3 — POs approved & ready to place
-  ;(data.active_pos || []).filter(p => p.status === 'approved').forEach(po => items.push({
-    bg:'#F0FDF4', color:'#34C759', icon:'fa-cart-shopping',
-    title: `Place order: ${po.deal_title || po.po_number}`,
-    sub: `${po.supplier_name} · Invoice paid — place now`,
-    urgency:'urgent',
-    onclick: `openPO(${po.id})`
-  }))
+  if (hotDeals.length) {
+    html += outreachSection('🔥 Needs Attention Now', hotDeals, {
+      estimate_accepted: { action:'Send invoice', color:'#FF3B30', bg:'#FFF1F0' },
+      invoice_sent:      { action:'Follow up on payment', color:'#FF9500', bg:'#FFF9EC' }
+    }, true)
+  }
+  if (followUp.length) {
+    html += outreachSection('📧 Follow Up on Estimates', followUp, {
+      estimate_sent:  { action:'Follow up on estimate', color:'#FF9500', bg:'#FFF9EC' },
+      proposal_sent:  { action:'Check in — any questions?', color:'#5856D6', bg:'#F5F3FF' }
+    }, false)
+  }
+  if (callBack.length) {
+    html += outreachSection('📞 New Leads to Contact', callBack, {
+      lead:      { action:'Call to qualify', color:'#007AFF', bg:'#EEF4FF' },
+      qualified: { action:'Send estimate', color:'#5856D6', bg:'#F5F3FF' }
+    }, false)
+  }
+  if (shipping.length) {
+    html += outreachSection('🚚 In Progress', shipping, {
+      invoice_paid:    { action:'Place order with supplier', color:'#34C759', bg:'#F0FDF4' },
+      order_placed:    { action:'Confirm with supplier', color:'#30D158', bg:'#F0FDF6' },
+      order_confirmed: { action:'Get shipping ETA', color:'#32ADE6', bg:'#EFF9FF' },
+      shipping:        { action:'Send tracking to customer', color:'#5856D6', bg:'#F5F3FF' }
+    }, false)
+  }
 
-  // 4 — AI needs-attention items (deduplicate deals already shown above)
-  const shownTaskDealIds = new Set([
-    ...(data.overdue_tasks||[]).map((t) => t.deal_id),
-    ...(data.due_today||[]).map((t) => t.deal_id)
-  ])
-  ;(attData?.items || []).filter(i => i.urgency === 'urgent' || i.urgency === 'high').forEach(i => {
-    if (shownTaskDealIds.has(i.deal_id)) return  // already covered by task row
-    const urgColors = {
-      urgent: { bg:'#FFF1F0', color:'#FF3B30' },
-      high:   { bg:'#FFF9EC', color:'#FF9500' },
-      medium: { bg:'#EEF4FF', color:'#007AFF' },
-      low:    { bg:'#F2F2F7', color:'#8E8E93' }
-    }
-    const uc = urgColors[i.urgency] || urgColors.medium
-    items.push({
-      bg: uc.bg, color: uc.color,
-      icon: i.icon || 'fa-circle-dot',
-      title: i.action,
-      sub: `${i.deal_title}${i.contact_name ? ' · ' + i.contact_name : ''}${i.days_since_comm !== null ? ' · ' + i.days_since_comm + 'd no contact' : ''}`,
-      urgency: i.urgency,
-      onclick: `openDeal(${i.deal_id})`
-    })
-  })
+  if (!html) {
+    html = `<div style="text-align:center;padding:48px 24px">
+      <div style="font-size:48px;margin-bottom:12px">🎉</div>
+      <div style="font-size:18px;font-weight:700;color:#1C1C1E">All caught up!</div>
+      <div style="font-size:14px;color:#8E8E93;margin-top:6px">No outreach needed right now</div>
+    </div>`
+  }
 
-  if (!items.length) {
-    el.innerHTML = `
-      <div class="all-good">
-        <div style="width:42px;height:42px;background:#BBF7D0;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-          <i class="fas fa-check" style="color:#15803D;font-size:18px"></i>
+  el.innerHTML = html
+}
+
+function outreachSection(title, deals, stageConfig, urgent) {
+  const rows = deals.map(d => {
+    const cfg = stageConfig[d.stage] || { action: NEXT[d.stage]?.label || 'Follow up', color:'#8E8E93', bg:'#F2F2F7' }
+    const name = d.contact_name || d.title || 'Unknown'
+    const initials = name.split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase()
+    const avatarColors = [['#DBEAFE','#1D4ED8'],['#DCF5E7','#15803D'],['#FCE7F3','#9D174D'],['#FEF9C3','#854D0E'],['#EDE9FE','#6D28D9'],['#FEE2E2','#991B1B']]
+    const [ab,af] = avatarColors[(d.id||0)%avatarColors.length]
+    const notes = d.notes ? d.notes.slice(0,60) + (d.notes.length>60?'…':'') : ''
+    const products = d.products || d.product_categories || ''
+    return `
+      <div class="outreach-row" onclick="openDeal(${d.id})">
+        <div class="avatar" style="background:${ab};color:${af};flex-shrink:0;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700">${initials}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:15px;font-weight:700;color:#1C1C1E;line-height:1.2">${name}</div>
+          ${products ? `<div style="font-size:12px;color:#8E8E93;margin-top:1px">${products}</div>` : ''}
+          <div style="display:flex;align-items:center;gap:6px;margin-top:5px">
+            <span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;background:${cfg.bg};color:${cfg.color}">${cfg.action}</span>
+            ${d.value > 0 ? `<span style="font-size:12px;color:#34C759;font-weight:600">$${fmtMoney(d.value)}</span>` : ''}
+          </div>
+          ${notes ? `<div style="font-size:11px;color:#AEAEB2;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${notes}</div>` : ''}
         </div>
-        <div>
-          <div style="font-weight:700;font-size:16px;color:#15803D">All caught up!</div>
-          <div style="font-size:13px;color:#4ADE80;margin-top:2px">Nothing urgent right now</div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
+          ${d.contact_mobile || d.contact_phone ? `<a href="tel:${d.contact_mobile||d.contact_phone}" onclick="event.stopPropagation()" style="width:34px;height:34px;background:#F0FDF4;border-radius:50%;display:flex;align-items:center;justify-content:center;text-decoration:none"><i class="fas fa-phone" style="color:#34C759;font-size:13px"></i></a>` : `<i class="fas fa-chevron-right" style="color:#C7C7CC;font-size:13px;margin-top:8px"></i>`}
         </div>
       </div>`
-    return
+  }).join('')
+
+  return `
+    <div style="margin-bottom:8px">
+      <div style="font-size:12px;font-weight:700;color:#8E8E93;text-transform:uppercase;letter-spacing:.06em;padding:12px 16px 6px">
+        ${title} <span style="font-weight:500;opacity:.7">${deals.length}</span>
+      </div>
+      <div class="inset-list" style="margin:0 16px">${rows}</div>
+    </div>`
+}
+
+// ── LAURA VIEW: operations & backend tasks ────────────
+function renderLauraView(deals, dash) {
+  const el = document.getElementById('home-ops')
+  let html = ''
+
+  // Overdue tasks
+  const overdue = dash.overdue_tasks || []
+  const dueToday = dash.due_today || []
+
+  if (overdue.length) {
+    html += lauraSection('⚠️ Overdue Tasks', overdue.map(t => ({
+      label: t.title, sub: t.deal_title || t.contact_name || '',
+      color:'#FF3B30', bg:'#FFF1F0', onclick:`openTaskPanel('${encodeURIComponent(JSON.stringify(t))}')`
+    })))
+  }
+  if (dueToday.length) {
+    html += lauraSection('📋 Due Today', dueToday.map(t => ({
+      label: t.title, sub: t.deal_title || t.contact_name || '',
+      color:'#FF9500', bg:'#FFF9EC', onclick:`openTaskPanel('${encodeURIComponent(JSON.stringify(t))}')`
+    })))
   }
 
-  el.innerHTML = `<div class="inset-list" style="margin:0 16px">` +
-    items.map(item => `
-      <div class="action-card" onclick="${item.onclick}">
-        <div class="icon-circle" style="background:${item.bg}">
-          <i class="fas ${item.icon}" style="color:${item.color}"></i>
-        </div>
-        <div style="flex:1;min-width:0">
-          <div class="row-main">${item.title}</div>
-          <div class="row-sub" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.sub}</div>
-        </div>
-        ${item.urgency === 'urgent'
-          ? `<span class="urgent-badge">URGENT</span>`
-          : `<i class="fas fa-chevron-right row-chevron"></i>`}
+  // Stage-based Laura actions
+  const needsInvoice = deals.filter(d => d.stage === 'estimate_accepted')
+  if (needsInvoice.length) {
+    html += lauraSection('💰 Send Invoice', needsInvoice.map(d => ({
+      label: d.contact_name || d.title, sub: 'Estimate accepted — invoice now',
+      color:'#FF3B30', bg:'#FFF1F0', onclick:`openDeal(${d.id})`
+    })))
+  }
+
+  const needsOrder = deals.filter(d => d.stage === 'invoice_paid')
+  if (needsOrder.length) {
+    html += lauraSection('🛒 Place Orders', needsOrder.map(d => ({
+      label: d.contact_name || d.title, sub: 'Invoice paid — place order with supplier',
+      color:'#34C759', bg:'#F0FDF4', onclick:`openDeal(${d.id})`
+    })))
+  }
+
+  const awaitingConfirm = deals.filter(d => d.stage === 'order_placed')
+  if (awaitingConfirm.length) {
+    html += lauraSection('📦 Awaiting Supplier Confirmation', awaitingConfirm.map(d => ({
+      label: d.contact_name || d.title, sub: 'Order placed — confirm with supplier',
+      color:'#32ADE6', bg:'#EFF9FF', onclick:`openDeal(${d.id})`
+    })))
+  }
+
+  const needsTracking = deals.filter(d => d.stage === 'order_confirmed')
+  if (needsTracking.length) {
+    html += lauraSection('🚚 Get Shipping ETA', needsTracking.map(d => ({
+      label: d.contact_name || d.title, sub: 'Order confirmed — get tracking from supplier',
+      color:'#5856D6', bg:'#F5F3FF', onclick:`openDeal(${d.id})`
+    })))
+  }
+
+  if (!html) {
+    html = `<div style="text-align:center;padding:48px 24px">
+      <div style="font-size:48px;margin-bottom:12px">✅</div>
+      <div style="font-size:18px;font-weight:700;color:#1C1C1E">Operations up to date!</div>
+      <div style="font-size:14px;color:#8E8E93;margin-top:6px">No backend tasks right now</div>
+    </div>`
+  }
+
+  el.innerHTML = html
+}
+
+function lauraSection(title, items) {
+  const rows = items.map(item => `
+    <div class="action-card" onclick="${item.onclick}" style="background:#fff">
+      <div style="width:36px;height:36px;border-radius:10px;background:${item.bg};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <i class="fas fa-circle-dot" style="color:${item.color};font-size:14px"></i>
       </div>
-    `).join('') + `</div>`
-}
-
-async function renderHomeDeals() {
-  const el = document.getElementById('home-deals')
-  try {
-    const { data } = await axios.get(`${API}/deals`, { params: { status:'active', limit:50 } })
-    if (!data.deals?.length) {
-      el.innerHTML = `<div class="empty-state"><i class="fas fa-handshake"></i><p>No active deals yet.<br>Tap + to add your first one.</p></div>`
-      return
-    }
-    const sorted = [...data.deals].sort((a,b) => {
-      const p = { urgent:0, high:1, medium:2, low:3 }
-      return (p[a.priority]??2) - (p[b.priority]??2) || (b.value||0) - (a.value||0)
-    })
-    el.innerHTML = sorted.map(d => dealCard(d)).join('')
-  } catch { el.innerHTML = '' }
-}
-
-// ── DEAL CARD ────────────────────────────────────────
-function dealCard(d) {
-  const st = S[d.stage] || S.lead
-  const nx = NEXT[d.stage] || {}
+      <div style="flex:1;min-width:0">
+        <div class="row-main">${item.label}</div>
+        <div class="row-sub" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.sub}</div>
+      </div>
+      <i class="fas fa-chevron-right row-chevron"></i>
+    </div>`).join('')
   return `
-    <div class="deal-card" style="border-left-color:${st.hex}" onclick="openDeal(${d.id})">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-        <div class="deal-title" style="flex:1">${d.title}</div>
-        ${d.value > 0 ? `<div class="deal-value" style="white-space:nowrap">$${fmtMoney(d.value)}</div>` : ''}
+    <div style="margin-bottom:8px">
+      <div style="font-size:12px;font-weight:700;color:#8E8E93;text-transform:uppercase;letter-spacing:.06em;padding:12px 16px 6px">
+        ${title} <span style="font-weight:500;opacity:.7">${items.length}</span>
       </div>
-      ${d.contact_name ? `<div class="deal-contact"><i class="fas fa-user" style="margin-right:5px;font-size:11px"></i>${d.contact_name}</div>` : ''}
-      <div class="deal-footer">
-        <span class="stage-tag" style="background:${st.bg};color:${st.color}">${st.label}</span>
-        ${nx.label ? `
-          <div class="next-action" style="color:${nx.urgent ? '#FF3B30' : '#8E8E93'}">
-            <i class="fas ${nx.icon}" style="font-size:11px"></i>
-            <span>${nx.label}</span>
-          </div>
-        ` : ''}
-      </div>
-    </div>
-  `
+      <div class="inset-list" style="margin:0 16px">${rows}</div>
+    </div>`
 }
 
-// ── PIPELINE PAGE ────────────────────────────────────
+// ── PIPELINE PAGE ─────────────────────────────────────
+const PIPE_STAGES = [
+  { key:'all',              label:'All Active' },
+  { key:'lead',             label:'New Leads' },
+  { key:'qualified',        label:'Qualified' },
+  { key:'estimate_sent',    label:'Estimate Sent' },
+  { key:'estimate_accepted',label:'Accepted' },
+  { key:'invoice_sent',     label:'Invoice Sent' },
+  { key:'invoice_paid',     label:'Invoice Paid' },
+  { key:'order_placed',     label:'Order Placed' },
+  { key:'order_confirmed',  label:'Confirmed' },
+  { key:'shipping',         label:'In Transit' },
+  { key:'delivered',        label:'Delivered' },
+]
+const pipeState = { stage: 'all', counts: {} }
+
+function filterDealsByStage(stage) {
+  pipeState.stage = stage
+  renderPipeTabs()
+  loadDeals()
+}
+
+function renderPipeTabs() {
+  const el = document.getElementById('pipe-stage-tabs')
+  if (!el) return
+  el.innerHTML = PIPE_STAGES.map(ps => {
+    const active = pipeState.stage === ps.key
+    const cnt = ps.key === 'all' ? Object.values(pipeState.counts).reduce((a,b)=>a+b,0) : (pipeState.counts[ps.key]||0)
+    const st = ps.key === 'all' ? null : S[ps.key]
+    const bg = active ? (st ? st.color : '#1C1C1E') : (st ? st.bg : '#F2F2F7')
+    const fg = active ? '#fff' : (st ? st.color : '#636366')
+    return `<button onclick="filterDealsByStage('${ps.key}')"
+      style="flex-shrink:0;padding:7px 14px;border-radius:20px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:${bg};color:${fg};white-space:nowrap;transition:all .15s">
+      ${ps.label}${cnt > 0 ? ` <span style="opacity:${active?'.85':'.6'}">${cnt}</span>` : ''}
+    </button>`
+  }).join('')
+}
+
 async function loadDeals() {
   const el = document.getElementById('deals-list')
   el.innerHTML = `<div class="loading"><i class="fas fa-spinner fa-spin"></i></div>`
   try {
-    const { data } = await axios.get(`${API}/deals`, { params: { status: state.dealsFilter, limit:100 } })
-    if (!data.deals?.length) {
-      el.innerHTML = `<div class="empty-state"><i class="fas fa-handshake"></i><p>No ${state.dealsFilter} deals</p></div>`
+    const params = { status:'active', limit:200 }
+    if (pipeState.stage && pipeState.stage !== 'all') params.stage = pipeState.stage
+    const { data } = await axios.get(`${API}/deals`, { params })
+    const deals = data.deals || []
+
+    // Update counts from this load (when showing all)
+    if (pipeState.stage === 'all') {
+      pipeState.counts = {}
+      deals.forEach(d => { pipeState.counts[d.stage] = (pipeState.counts[d.stage]||0)+1 })
+    }
+    renderPipeTabs()
+
+    if (!deals.length) {
+      el.innerHTML = `<div class="empty-state"><i class="fas fa-handshake"></i><p>No deals in this stage</p></div>`
       return
     }
-    el.innerHTML = data.deals.map(d => dealCard(d)).join('')
+
+    // Group by stage when showing all
+    if (pipeState.stage === 'all') {
+      const stageOrder = ['estimate_accepted','invoice_sent','invoice_paid','order_placed','order_confirmed','shipping','estimate_sent','qualified','lead','delivered']
+      const grouped = {}
+      deals.forEach(d => { (grouped[d.stage]||(grouped[d.stage]=[])).push(d) })
+      let html = ''
+      stageOrder.forEach(s => {
+        if (!grouped[s]?.length) return
+        const st = S[s]
+        html += `<div style="margin-bottom:4px">
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 16px 6px">
+            <span style="width:10px;height:10px;border-radius:50%;background:${st.hex};flex-shrink:0"></span>
+            <span style="font-size:12px;font-weight:700;color:#636366;text-transform:uppercase;letter-spacing:.05em">${st.label}</span>
+            <span style="font-size:12px;color:#AEAEB2;font-weight:500">${grouped[s].length}</span>
+          </div>
+          <div class="inset-list" style="margin:0 16px">${grouped[s].map(d => dealRow(d)).join('')}</div>
+        </div>`
+      })
+      el.innerHTML = html
+    } else {
+      const st = S[pipeState.stage]
+      el.innerHTML = `
+        <div style="padding:10px 16px 6px;display:flex;align-items:center;gap:8px">
+          <span style="width:10px;height:10px;border-radius:50%;background:${st?.hex||'#8E8E93'};flex-shrink:0"></span>
+          <span style="font-size:12px;font-weight:700;color:#636366;text-transform:uppercase;letter-spacing:.05em">${st?.label||pipeState.stage}</span>
+          <span style="font-size:12px;color:#AEAEB2">${deals.length} people</span>
+        </div>
+        <div class="inset-list" style="margin:0 16px">${deals.map(d => dealRow(d)).join('')}</div>`
+    }
   } catch {
     el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading deals</p></div>`
   }
 }
 
-function filterDeals(f, btn) {
-  state.dealsFilter = f
-  document.querySelectorAll('#deals-seg .seg-btn').forEach(b => b.classList.remove('active'))
-  btn.classList.add('active')
-  loadDeals()
+function dealRow(d) {
+  const nx = NEXT[d.stage] || {}
+  const name = d.contact_name || d.title || 'Unknown'
+  const initials = name.split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase()
+  const avatarColors = [['#DBEAFE','#1D4ED8'],['#DCF5E7','#15803D'],['#FCE7F3','#9D174D'],['#FEF9C3','#854D0E'],['#EDE9FE','#6D28D9'],['#FEE2E2','#991B1B']]
+  const [ab,af] = avatarColors[(d.id||0)%avatarColors.length]
+  const products = d.products || d.product_categories || ''
+  return `
+    <div class="outreach-row" onclick="openDeal(${d.id})">
+      <div class="avatar" style="background:${ab};color:${af};flex-shrink:0;width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">${initials}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:15px;font-weight:700;color:#1C1C1E;line-height:1.2">${name}</div>
+        ${products ? `<div style="font-size:12px;color:#AEAEB2;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${products}</div>` : ''}
+        ${nx.label ? `<div style="font-size:12px;color:${nx.urgent?'#FF3B30':'#8E8E93'};margin-top:3px;display:flex;align-items:center;gap:4px"><i class="fas ${nx.icon}" style="font-size:10px"></i>${nx.label}</div>` : ''}
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+        ${d.value > 0 ? `<span style="font-size:13px;font-weight:700;color:#34C759">$${fmtMoney(d.value)}</span>` : ''}
+        <i class="fas fa-chevron-right" style="color:#C7C7CC;font-size:12px"></i>
+      </div>
+    </div>`
 }
 
-// ── CONTACTS PAGE ────────────────────────────────────
+// Legacy dealCard kept for compatibility
+function dealCard(d) { return dealRow(d) }
+function filterDeals(f, btn) { pipeState.stage = 'all'; loadDeals() }
+
+// ── CONTACTS PAGE ─────────────────────────────────────
+const contactsState = { filter: 'all', search: '' }
+
+function filterContacts(type, btn) {
+  contactsState.filter = type
+  document.querySelectorAll('#contacts-seg .seg-btn').forEach(b => b.classList.remove('active'))
+  btn.classList.add('active')
+  loadContacts(contactsState.search)
+}
+
 async function loadContacts(q = '') {
+  contactsState.search = q
   const el = document.getElementById('contacts-list')
   el.innerHTML = `<div class="loading"><i class="fas fa-spinner fa-spin"></i></div>`
   try {
-    const { data } = await axios.get(`${API}/contacts`, { params: { search:q, limit:100 } })
-    if (!data.contacts?.length) {
+    const params = { limit: 300 }
+    if (q) params.search = q
+    if (contactsState.filter !== 'all') params.type = contactsState.filter
+    const { data } = await axios.get(`${API}/contacts`, { params })
+    const contacts = data.contacts || []
+
+    if (!contacts.length) {
       el.innerHTML = `<div class="empty-state"><i class="fas fa-users"></i><p>No contacts found</p></div>`
       return
     }
-    const sorted = [...data.contacts].sort((a,b) => (a.last_name||'').localeCompare(b.last_name||''))
+
+    // Update count badges if no search
+    if (!q) {
+      if (contactsState.filter === 'all') {
+        const leads = contacts.filter(c => c.type === 'lead' || c.type === 'prospect').length
+        const custs = contacts.filter(c => c.type === 'customer').length
+        const allEl = document.getElementById('cnt-all')
+        const leadsEl = document.getElementById('cnt-leads')
+        const custEl = document.getElementById('cnt-cust')
+        if (allEl) allEl.textContent = contacts.length
+        if (leadsEl) leadsEl.textContent = leads
+        if (custEl) custEl.textContent = custs
+      }
+    }
+
+    const sorted = [...contacts].sort((a,b) => (a.last_name||a.first_name||'').localeCompare(b.last_name||b.first_name||''))
     el.innerHTML = `<div class="inset-list" style="margin:0 16px">` + sorted.map(c => contactRow(c)).join('') + `</div>`
   } catch {
     el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading</p></div>`
@@ -288,29 +468,35 @@ async function loadContacts(q = '') {
 }
 
 function contactRow(c) {
-  const init = `${c.first_name?.[0]||''}${c.last_name?.[0]||''}`
-  const avatarColors = [
-    ['#DBEAFE','#1D4ED8'],['#DCF5E7','#15803D'],['#FCE7F3','#9D174D'],
-    ['#FEF9C3','#854D0E'],['#EDE9FE','#6D28D9'],['#FEE2E2','#991B1B']
-  ]
+  const init = `${c.first_name?.[0]||''}${c.last_name?.[0]||''}`.toUpperCase() || '?'
+  const avatarColors = [['#DBEAFE','#1D4ED8'],['#DCF5E7','#15803D'],['#FCE7F3','#9D174D'],['#FEF9C3','#854D0E'],['#EDE9FE','#6D28D9'],['#FEE2E2','#991B1B']]
   const [bg, fg] = avatarColors[(c.id||0) % avatarColors.length]
-  const typeDot = { lead:'#8E8E93', prospect:'#007AFF', customer:'#34C759' }
-  const tColor = typeDot[c.type] || '#8E8E93'
+  const typeConfig = {
+    customer: { label:'Customer', color:'#34C759', bg:'#F0FDF4' },
+    lead:     { label:'Lead',     color:'#007AFF', bg:'#EEF4FF' },
+    prospect: { label:'Prospect', color:'#5856D6', bg:'#F5F3FF' },
+  }
+  const tc = typeConfig[c.type] || typeConfig.lead
+  const location = [c.city, c.state].filter(Boolean).join(', ')
+  const contact = c.mobile || c.phone || c.email || ''
+  const notes = c.notes ? c.notes.slice(0,55)+(c.notes.length>55?'…':'') : ''
 
   return `
     <div class="contact-row" onclick="openContact(${c.id})">
-      <div class="avatar" style="background:${bg};color:${fg}">${init}</div>
+      <div class="avatar" style="background:${bg};color:${fg};flex-shrink:0">${init}</div>
       <div style="flex:1;min-width:0">
-        <div class="row-main">${c.first_name} ${c.last_name}</div>
-        <div class="row-sub">${c.company_name ? c.company_name + ' · ' : ''}${c.mobile || c.phone || c.email || ''}</div>
+        <div style="font-size:15px;font-weight:700;color:#1C1C1E;line-height:1.2">${c.first_name||''} ${c.last_name||''}</div>
+        <div style="font-size:12px;color:#8E8E93;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          ${location ? location + (contact?' · ':'') : ''}${contact}
+        </div>
+        ${notes ? `<div style="font-size:11px;color:#AEAEB2;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${notes}</div>` : ''}
       </div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-        <span style="width:8px;height:8px;border-radius:50%;background:${tColor};display:block;margin-top:2px"></span>
-        ${c.last_contacted_at ? `<span style="font-size:11px;color:#C7C7CC">${timeAgo(c.last_contacted_at)}</span>` : ''}
-        <i class="fas fa-chevron-right row-chevron"></i>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
+        <span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;background:${tc.bg};color:${tc.color};white-space:nowrap">${tc.label}</span>
+        ${c.last_contacted_at ? `<span style="font-size:10px;color:#C7C7CC">${timeAgo(c.last_contacted_at)}</span>` : ''}
+        <i class="fas fa-chevron-right" style="color:#D1D1D6;font-size:11px"></i>
       </div>
-    </div>
-  `
+    </div>`
 }
 
 let _st = null
