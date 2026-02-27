@@ -11,4 +11,6 @@
       "database_id": "48e29101-241e-41cc-a843-73c7e99cf93c"
     }
   ]
+  // Note: Cron trigger (daily at 01:00 UTC) is configured in the Cloudflare Dashboard
+  // under Pages → amberway-crm → Settings → Functions → Cron Triggers → "0 1 * * *"
 }

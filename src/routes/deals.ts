@@ -338,4 +338,125 @@ deals.get('/:id/summary', async (c) => {
   })
 })
 
+// ── STALE DEAL AUTO-CLOSE ─────────────────────────────
+// Exported so it can be called by the cron handler in index.tsx too
+
+export async function runStaleDealCleanup(DB: any): Promise<{ marked: number; deals: any[] }> {
+  const STALE_DAYS = 60
+
+  // Find all active deals stuck in estimate_sent for > 60 days
+  // We look at updated_at (last any change) as a conservative proxy;
+  // if the deal has had zero activity for 60 days it's cold.
+  const { results: stale } = await DB.prepare(`
+    SELECT d.id, d.title, d.stage, d.updated_at, d.contact_id,
+           c.first_name || ' ' || c.last_name AS contact_name
+    FROM deals d
+    LEFT JOIN contacts c ON d.contact_id = c.id
+    WHERE d.stage = 'estimate_sent'
+      AND d.status = 'active'
+      AND (
+        julianday('now') - julianday(d.updated_at) > ?
+      )
+  `).bind(STALE_DAYS).all()
+
+  if (!stale.length) return { marked: 0, deals: [] }
+
+  const marked: any[] = []
+
+  for (const deal of stale as any[]) {
+    // Mark the deal as lost
+    await DB.prepare(`
+      UPDATE deals
+      SET stage = 'lost',
+          status = 'lost',
+          lost_reason = 'No response — estimate sent but no reply for ${STALE_DAYS}+ days',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(deal.id).run()
+
+    // Log activity
+    await logActivity(DB, {
+      deal_id: deal.id,
+      entity_type: 'deal',
+      entity_id: deal.id,
+      action: 'auto_lost',
+      description: `Deal automatically marked as lost — estimate sent but no activity for ${STALE_DAYS}+ days`,
+      old_value: 'estimate_sent',
+      new_value: 'lost',
+      performed_by: 'system'
+    })
+
+    // Log communication note
+    await DB.prepare(`
+      INSERT INTO communications (deal_id, contact_id, type, direction, subject, body, status, created_by)
+      VALUES (?, ?, 'note', 'internal', 'Auto-closed: No response', ?, 'completed', 'system')
+    `).bind(
+      deal.id,
+      deal.contact_id || null,
+      `Deal automatically marked as Lost. Estimate was sent but no progress or reply was recorded for ${STALE_DAYS}+ days. Contact: ${deal.contact_name || 'unknown'}.`
+    ).run()
+
+    // High-priority notification for the team
+    await createNotification(DB, {
+      type: 'deal_lost',
+      title: `Deal auto-closed: ${deal.contact_name || deal.title}`,
+      message: `Estimate sent ${STALE_DAYS}+ days ago with no reply. Marked as Lost.`,
+      entity_type: 'deal',
+      entity_id: deal.id,
+      action_url: `/deals/${deal.id}`,
+      priority: 'high'
+    })
+
+    marked.push({ id: deal.id, title: deal.title, contact_name: deal.contact_name, updated_at: deal.updated_at })
+  }
+
+  return { marked: marked.length, deals: marked }
+}
+
+// POST /api/deals/admin/stale-cleanup — manual trigger + cron endpoint
+deals.post('/admin/stale-cleanup', async (c) => {
+  const { DB } = c.env
+
+  // Optional secret header guard (set CLEANUP_SECRET env var to protect it)
+  const secret = c.env.CLEANUP_SECRET
+  if (secret) {
+    const authHeader = c.req.header('x-cleanup-secret')
+    if (authHeader !== secret) return c.json({ error: 'Unauthorized' }, 401)
+  }
+
+  const result = await runStaleDealCleanup(DB)
+
+  return c.json({
+    success: true,
+    message: result.marked === 0
+      ? 'No stale deals found.'
+      : `Marked ${result.marked} deal(s) as Lost (estimate_sent > 60 days with no activity).`,
+    ...result
+  })
+})
+
+// GET /api/deals/admin/stale-preview — see what would be closed without doing it
+deals.get('/admin/stale-preview', async (c) => {
+  const { DB } = c.env
+  const STALE_DAYS = 60
+
+  const { results } = await DB.prepare(`
+    SELECT d.id, d.title, d.stage, d.updated_at,
+           c.first_name || ' ' || c.last_name AS contact_name,
+           CAST(julianday('now') - julianday(d.updated_at) AS INTEGER) AS days_stale
+    FROM deals d
+    LEFT JOIN contacts c ON d.contact_id = c.id
+    WHERE d.stage = 'estimate_sent'
+      AND d.status = 'active'
+      AND (julianday('now') - julianday(d.updated_at)) > ?
+    ORDER BY days_stale DESC
+  `).bind(STALE_DAYS).all()
+
+  return c.json({
+    stale_days_threshold: STALE_DAYS,
+    count: results.length,
+    deals: results
+  })
+})
+
 export default deals

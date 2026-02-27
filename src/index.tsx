@@ -1150,4 +1150,23 @@ body {
 </body>
 </html>`
 
-export default app
+import { runStaleDealCleanup } from './routes/deals'
+
+// Cloudflare Workers scheduled cron handler
+// Configured in wrangler.jsonc: runs daily at 01:00 UTC
+export default {
+  fetch: app.fetch.bind(app),
+
+  async scheduled(event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
+    console.log(`[cron] triggered: ${event.cron} at ${new Date().toISOString()}`)
+    try {
+      const result = await runStaleDealCleanup(env.DB)
+      console.log(`[cron] stale-deal cleanup: marked ${result.marked} deal(s) as lost`)
+      if (result.deals.length) {
+        console.log('[cron] affected deals:', result.deals.map((d:any) => `#${d.id} ${d.contact_name || d.title}`).join(', '))
+      }
+    } catch (err) {
+      console.error('[cron] stale-deal cleanup failed:', err)
+    }
+  }
+}

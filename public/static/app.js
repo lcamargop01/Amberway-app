@@ -277,7 +277,44 @@ function renderLauraView(deals, dash) {
     </div>`
   }
 
+  // Append stale-deal banner (async, loads after render)
   el.innerHTML = html
+  loadStaleBanner()
+}
+
+async function loadStaleBanner() {
+  try {
+    const { data } = await axios.get(`${API}/deals/admin/stale-preview`)
+    if (!data.count) return
+    const el = document.getElementById('home-ops')
+    const banner = `
+      <div style="margin:0 16px 16px;background:#FFF9EC;border:1.5px solid #FF9500;border-radius:14px;padding:14px 16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div>
+            <div style="font-size:14px;font-weight:700;color:#92400E">🕐 ${data.count} stale estimate${data.count>1?'s':''} — no reply in 60+ days</div>
+            <div style="font-size:12px;color:#B45309;margin-top:3px">These will be auto-closed daily. Review before they're lost.</div>
+          </div>
+          <button onclick="runStaleCleanup()" style="flex-shrink:0;background:#FF9500;color:#fff;border:none;border-radius:10px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer">
+            Mark Lost
+          </button>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:#92400E">
+          ${data.deals.slice(0,4).map((d) => `${d.contact_name||d.title} (${d.days_stale}d)`).join(' · ')}${data.count>4?' + more':''}
+        </div>
+      </div>`
+    el.insertAdjacentHTML('afterbegin', banner)
+  } catch { /* silent */ }
+}
+
+async function runStaleCleanup() {
+  if (!confirm(`Mark all estimates with no reply for 60+ days as Lost?\n\nThis will log a note on each deal and send a notification. The cron job does this automatically every night.`)) return
+  try {
+    const { data } = await axios.post(`${API}/deals/admin/stale-cleanup`)
+    toast(`✓ ${data.message}`, 'success')
+    loadHome()
+  } catch {
+    toast('Error running cleanup', 'error')
+  }
 }
 
 function lauraSection(title, items) {
@@ -366,14 +403,24 @@ async function loadDeals() {
       const grouped = {}
       deals.forEach(d => { (grouped[d.stage]||(grouped[d.stage]=[])).push(d) })
       let html = ''
+
+      // Stale estimate warning row at top of All view
+      const estimateDeals = grouped['estimate_sent'] || []
+      if (estimateDeals.length) {
+        // Check stale count asynchronously, attach to estimate_sent header
+        loadStaleCountForPipeline(estimateDeals.length)
+      }
+
       stageOrder.forEach(s => {
         if (!grouped[s]?.length) return
         const st = S[s]
+        const isEstimate = s === 'estimate_sent'
         html += `<div style="margin-bottom:4px">
           <div style="display:flex;align-items:center;gap:8px;padding:10px 16px 6px">
             <span style="width:10px;height:10px;border-radius:50%;background:${st.hex};flex-shrink:0"></span>
             <span style="font-size:12px;font-weight:700;color:#636366;text-transform:uppercase;letter-spacing:.05em">${st.label}</span>
             <span style="font-size:12px;color:#AEAEB2;font-weight:500">${grouped[s].length}</span>
+            ${isEstimate ? `<span id="stale-pipe-badge" style="font-size:11px;font-weight:700;color:#FF9500;background:#FFF9EC;padding:2px 7px;border-radius:6px;display:none">…stale</span>` : ''}
           </div>
           <div class="inset-list" style="margin:0 16px">${grouped[s].map(d => dealRow(d)).join('')}</div>
         </div>`
@@ -392,6 +439,22 @@ async function loadDeals() {
   } catch {
     el.innerHTML = `<div class="empty-state"><i class="fas fa-triangle-exclamation"></i><p>Error loading deals</p></div>`
   }
+}
+
+async function loadStaleCountForPipeline(totalEstimates) {
+  try {
+    const { data } = await axios.get(`${API}/deals/admin/stale-preview`)
+    const badge = document.getElementById('stale-pipe-badge')
+    if (!badge || !data.count) return
+    badge.textContent = `${data.count} stale 60d+`
+    badge.style.display = 'inline'
+    badge.style.cursor = 'pointer'
+    badge.onclick = () => {
+      if (confirm(`${data.count} estimates have had no activity for 60+ days.\n\nMark all as Lost now? (This also runs automatically every night.)`) ) {
+        runStaleCleanup()
+      }
+    }
+  } catch { /* silent */ }
 }
 
 function dealRow(d) {
